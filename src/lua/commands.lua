@@ -1,5 +1,6 @@
 -- The picogit commands: clone, pull, commit -a, push.
 local core = require("picogit.core")
+local config = require("config")
 local fetch = require("fetch")
 local index = require("index")
 local odb_mod = require("odb")
@@ -126,7 +127,9 @@ local function clone_into(args, remote)
 
   local n = 0
   local entries = worktree.checkout(r, commit_tree(r.odb, commit_id), function(c) n = c end)
+  util.trace_mem("after checkout")
   index.write(r.index_path, entries)
+  util.trace_mem("after index")
   util.info("Checked out %d files at %s", n, short(commit_id))
 end
 
@@ -264,9 +267,15 @@ local function identity(r)
   local email = os.getenv("PICOGIT_AUTHOR_EMAIL")
   if not name or name == "" then name = r.config:get("user.name") end
   if not email or email == "" then email = r.config:get("user.email") end
+  if (type(name) ~= "string" or type(email) ~= "string") and os.getenv("HOME") then
+    -- like git, fall back to the global configuration
+    local global = config.parse(util.read_file(os.getenv("HOME") .. "/.gitconfig") or "")
+    if type(name) ~= "string" then name = global["user.name"] end
+    if type(email) ~= "string" then email = global["user.email"] end
+  end
   if type(name) ~= "string" or name == "" or type(email) ~= "string" or email == "" then
     util.die("author identity unknown: set user.name and user.email in .git/config\n" ..
-             "or PICOGIT_AUTHOR_NAME and PICOGIT_AUTHOR_EMAIL")
+             "(or ~/.gitconfig), or PICOGIT_AUTHOR_NAME and PICOGIT_AUTHOR_EMAIL")
   end
   name = name:gsub("[<>\n]", ""):gsub("^%s+", ""):gsub("%s+$", "")
   email = email:gsub("[<>\n]", ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -300,8 +309,12 @@ function M.commit(args)
   local r = repo_mod.open()
   local head = r.refs:head()
   local entries = index.read(r.index_path)
+  util.trace_mem("index read")
   local new_entries = worktree.snapshot(r, entries)
+  entries = nil
+  util.trace_mem("snapshot")
   local tree = worktree.write_tree(r, new_entries)
+  util.trace_mem("tree written")
   local parent_tree = head.id and commit_tree(r.odb, head.id)
   if tree == parent_tree or (not head.id and #new_entries == 0) then
     index.write(r.index_path, new_entries) -- refresh stat data
@@ -318,6 +331,7 @@ function M.commit(args)
     util.write_file(r.gitdir .. "/HEAD", id .. "\n")
   end
   index.write(r.index_path, new_entries)
+  util.trace_mem("index written")
   local changes = worktree.diff_trees(r, parent_tree, tree, "")
   local label = head.ref and head.ref:gsub("^refs/heads/", "") or "detached HEAD"
   print(("[%s%s %s] %s"):format(label, head.id and "" or " (root-commit)", short(id),

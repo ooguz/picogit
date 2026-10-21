@@ -75,6 +75,7 @@ function M.fetch_objects(repo, remote, listing, opts)
       show("Receiving objects: " .. human(received))
     end,
   }
+  util.trace_mem("before download")
   local ok, res = pcall(function()
     if listing.info.version == 2 then
       return transport.fetch_v2(remote, listing.info.caps, fopts)
@@ -83,6 +84,7 @@ function M.fetch_objects(repo, remote, listing, opts)
   end)
   local closed = f:close()
   if ok and not closed then ok, res = false, "cannot write " .. tmp end
+  util.trace_mem("after download")
   if ok then
     show("Receiving objects: " .. human(received) .. ", done.", true)
     local count
@@ -93,6 +95,7 @@ function M.fetch_objects(repo, remote, listing, opts)
     })
     if not ok then res = count end
     util.trace("unpacked %s objects from %d bytes", tostring(count), received)
+    util.trace_mem("after unpack")
   end
   core.unlink(tmp)
   if not ok then

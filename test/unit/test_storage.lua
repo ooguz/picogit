@@ -180,8 +180,14 @@ function T.index_roundtrip(t)
   t.eq(back[1].name, "a/x.sh")
   t.eq(back[1].mode, index.MODE_EXEC)
   t.eq(back[2].name, "b")
-  t.eq(back[2].mtime_ns, 456)
-  t.eq(back[2].ino, 99)
+  t.ok(index.stat_matches(back[2], st), "stat data survives the round trip")
+  local st2 = {}
+  for k, v in pairs(st) do st2[k] = v end
+  st2.mtime_ns = 457
+  t.ok(not index.stat_matches(back[2], st2), "nanoseconds are compared")
+  t.ok(not index.stat_matches(back[2], st, st), "racily clean entries are re-checked")
+  t.ok(index.stat_matches(back[2], st, { mtime = st.mtime, mtime_ns = st.mtime_ns + 1 }),
+       "files older than the index are trusted")
   t.eq(back[3].name, long)
   t.eq(back[5].mode, index.MODE_GITLINK)
   t.eq(back[5].id, string.rep("4", 40))

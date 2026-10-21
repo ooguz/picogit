@@ -15,36 +15,6 @@ local M = {}
 local TYPES = { "commit", "tree", "blob", "tag" }
 local OFS_DELTA, REF_DELTA = 6, 7
 
--- Objects up to this size are inflated in memory (and cached as possible
--- delta bases); larger non-delta objects are streamed to disk.
-local SMALL_OBJECT = 256 * 1024
-local CACHE_BYTES = 8 * 1024 * 1024
-
-local function new_cache(limit)
-  local c = { map = {}, queue = {}, head = 1, bytes = 0, limit = limit }
-  function c:get(id)
-    local e = self.map[id]
-    if e then return e[1], e[2] end
-  end
-  function c:put(id, t, data)
-    if #data > self.limit // 4 or self.map[id] then return end
-    self.map[id] = { t, data }
-    self.queue[#self.queue + 1] = id
-    self.bytes = self.bytes + #data
-    while self.bytes > self.limit and self.head <= #self.queue do
-      local old = self.queue[self.head]
-      self.queue[self.head] = nil
-      self.head = self.head + 1
-      local e = self.map[old]
-      if e then
-        self.bytes = self.bytes - #e[2]
-        self.map[old] = nil
-      end
-    end
-  end
-  return c
-end
-
 local function read_entry_header(fh, off)
   fh:seek("set", off)
   local h = fh:read(64) or ""
@@ -82,116 +52,116 @@ end
 -- Explode the pack at `path` into loose objects in `odb`.
 --   opts.progress(done, total) is called periodically.
 -- Returns the number of objects.
+--
+-- Like git index-pack this works in two passes so that memory use does not
+-- grow with the pack: the first pass streams every non-delta object
+-- straight to a loose object (in C, no Lua strings) and only records where
+-- the deltas are; the second pass walks each delta tree from its base,
+-- keeping just the current chain of base/result contents in memory.
 function M.unpack(path, odb, opts)
   opts = opts or {}
   local fh = assert(io.open(path, "rb"))
-  local size = fh:seek("end")
-  if size < 32 then
+  local function fail(...)
     fh:close()
-    util.die("pack: file too small (%d bytes)", size)
+    util.die(...)
   end
+  local size = fh:seek("end")
+  if size < 32 then fail("pack: file too small (%d bytes)", size) end
   fh:seek("set", 0)
   local sig, version, count = string.unpack(">c4I4I4", fh:read(12))
-  if sig ~= "PACK" or (version ~= 2 and version ~= 3) then
-    fh:close()
-    util.die("pack: bad header")
-  end
+  if sig ~= "PACK" or (version ~= 2 and version ~= 3) then fail("pack: bad header") end
   fh:seek("set", size - 20)
   local trailer = fh:read(20)
   if core.sha1_file(fh, 0, size - 20) ~= trailer then
-    fh:close()
-    util.die("pack: checksum mismatch (corrupt download)")
+    fail("pack: checksum mismatch (corrupt download)")
   end
 
-  local cache = new_cache(CACHE_BYTES)
-  local by_offset = {}
-  local pending = {}
-  local done, deltas = 0, 0
+  local bases = {}          -- offsets of the non-delta entries
+  local id_at = {}          -- entry offset -> object id (once known)
+  local type_at = {}        -- entry offset -> object type
+  local by_base_off = {}    -- base offset -> { delta entries }
+  local by_base_id = {}     -- base id -> { delta entries }
+  local ndeltas, done = 0, 0
+  local progress = opts.progress or function() end
 
-  local function base_object(id)
-    local t, data = cache:get(id)
-    if t then return t, data end
-    return odb:read(id)
-  end
-
-  local function resolve(off, base_id, d)
-    local t, base = base_object(base_id)
-    local ok, result = pcall(delta.apply, base, d)
-    if not ok then util.die("pack: bad delta at offset %d: %s", off, result) end
-    local id = odb:write(t, result)
-    cache:put(id, t, result)
-    by_offset[off] = id
-    done = done + 1
-    deltas = deltas + 1
-  end
-
+  -- pass 1
   local off = 12
   for _ = 1, count do
     local typ, osize, base, doff = read_entry_header(fh, off)
     local used
     if TYPES[typ] then
-      local id
-      if osize <= SMALL_OBJECT then
-        local data
-        data, used = core.pack_inflate(fh, doff, osize)
-        id = odb:write(TYPES[typ], data)
-        cache:put(id, TYPES[typ], data)
-      else
-        local sha
-        sha, used = core.pack_inflate_loose(fh, doff, osize, odb.dir, TYPES[typ])
-        id = core.tohex(sha)
-      end
-      by_offset[off] = id
+      local sha
+      sha, used = core.pack_inflate_loose(fh, doff, osize, odb.dir, TYPES[typ])
+      id_at[off] = core.tohex(sha)
+      type_at[off] = TYPES[typ]
+      bases[#bases + 1] = off
       done = done + 1
     elseif typ == OFS_DELTA or typ == REF_DELTA then
-      local base_id = typ == OFS_DELTA and by_offset[base] or nil
-      if typ == REF_DELTA and odb:has(base) then base_id = base end
-      if base_id then
-        local d
-        d, used = core.pack_inflate(fh, doff, osize)
-        resolve(off, base_id, d)
-      else
-        -- base not available yet: remember where the delta is and
-        -- re-read it later instead of keeping it in memory
-        local _
-        _, used = core.pack_inflate(fh, doff, osize)
-        pending[#pending + 1] = { off = off, typ = typ, base = base, doff = doff, size = osize }
+      used = core.pack_skip(fh, doff, osize)
+      local d = { off = off, doff = doff, size = osize }
+      local list = typ == OFS_DELTA and by_base_off or by_base_id
+      local l = list[base]
+      if not l then
+        l = {}
+        list[base] = l
       end
+      l[#l + 1] = d
+      ndeltas = ndeltas + 1
     else
-      util.die("pack: invalid object type %d at offset %d", typ, off)
+      fail("pack: invalid object type %d at offset %d", typ, off)
     end
     off = doff + used
-    if opts.progress then opts.progress(done, count) end
+    progress(done, count)
   end
   if off ~= size - 20 then
-    fh:close()
-    util.die("pack: %d bytes of garbage after the last object", size - 20 - off)
+    fail("pack: %d bytes of garbage after the last object", size - 20 - off)
   end
 
-  while #pending > 0 do
-    local rest = {}
-    for _, p in ipairs(pending) do
-      local base_id
-      if p.typ == OFS_DELTA then
-        base_id = by_offset[p.base]
-      elseif odb:has(p.base) then
-        base_id = p.base
-      end
-      if base_id then
-        resolve(p.off, base_id, (core.pack_inflate(fh, p.doff, p.size)))
-        if opts.progress then opts.progress(done, count) end
-      else
-        rest[#rest + 1] = p
-      end
+  -- pass 2: resolve the deltas depending on (off, id), whose content is
+  -- `data` (loaded on demand)
+  local resolved = 0
+  local function resolve(off_, id, t, data)
+    local children = {}
+    for _, d in ipairs(off_ and by_base_off[off_] or {}) do children[#children + 1] = d end
+    for _, d in ipairs(by_base_id[id] or {}) do children[#children + 1] = d end
+    if #children == 0 then return end
+    if off_ then by_base_off[off_] = nil end
+    by_base_id[id] = nil
+    if not data then
+      t, data = odb:read(id)
     end
-    if #rest == #pending then
-      fh:close()
-      util.die("pack: %d deltas reference missing base objects", #rest)
+    for i, d in ipairs(children) do
+      local ok, result = pcall(delta.apply, data, (core.pack_inflate(fh, d.doff, d.size)))
+      if not ok then fail("pack: bad delta at offset %d: %s", d.off, result) end
+      local cid = odb:write(t, result)
+      id_at[d.off], type_at[d.off] = cid, t
+      resolved = resolved + 1
+      done = done + 1
+      progress(done, count)
+      if i == #children then
+        -- tail call: this frame (and its base) is released, so a long
+        -- delta chain only keeps one base/result pair alive
+        return resolve(d.off, cid, t, result)
+      end
+      resolve(d.off, cid, t, result)
     end
-    pending = rest
+  end
+
+  for _, o in ipairs(bases) do
+    local id = id_at[o]
+    if by_base_off[o] or by_base_id[id] then resolve(o, id, type_at[o]) end
+  end
+  -- REF_DELTA against objects that were already in the repository
+  local ext = {}
+  for id in pairs(by_base_id) do ext[#ext + 1] = id end
+  for _, id in ipairs(ext) do
+    if by_base_id[id] and odb:has(id) then resolve(nil, id) end
+  end
+  if resolved ~= ndeltas then
+    fail("pack: %d deltas reference missing base objects", ndeltas - resolved)
   end
   fh:close()
-  util.trace("pack: %d objects, %d deltas", count, deltas)
+  util.trace("pack: %d objects, %d deltas", count, ndeltas)
   return count
 end
 

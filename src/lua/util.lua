@@ -22,6 +22,16 @@ function M.trace(fmt, ...)
   end
 end
 
+-- Trace the Lua heap size at a checkpoint.
+function M.trace_mem(label)
+  if M.verbose then
+    local st = M.read_file("/proc/self/status") or ""
+    M.trace("mem %s: lua heap %d KiB, rss %s KiB, peak %s KiB", label,
+            collectgarbage("count") // 1, st:match("VmRSS:%s*(%d+)") or "?",
+            st:match("VmHWM:%s*(%d+)") or "?")
+  end
+end
+
 function M.info(fmt, ...)
   if not M.quiet then
     io.stderr:write(fmt:format(...), "\n")

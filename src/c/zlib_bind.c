@@ -55,25 +55,31 @@ typedef struct {
     unsigned char inbuf[CHUNK];
 } zreader;
 
+/* The z_stream is created once and reset for every object: allocating
+ * and freeing zlib state per object fragments musl's heap badly (tens of
+ * MiB of RSS when exploding a pack of a few thousand objects). */
 static int zr_init(zreader *r, FILE *in)
 {
-    memset(&r->z, 0, sizeof r->z);
     r->in = in;
-    r->zinit = 0;
     r->ended = 0;
     r->fed = 0;
     r->limit = -1;
-    if (inflateInit(&r->z) != Z_OK)
+    if (!r->zinit) {
+        memset(&r->z, 0, sizeof r->z);
+        if (inflateInit(&r->z) != Z_OK)
+            return -1;
+        r->zinit = 1;
+    } else if (inflateReset(&r->z) != Z_OK) {
         return -1;
-    r->zinit = 1;
+    }
+    r->z.next_in = NULL;
+    r->z.avail_in = 0;
     return 0;
 }
 
 static void zr_end(zreader *r)
 {
-    if (r->zinit)
-        inflateEnd(&r->z);
-    r->zinit = 0;
+    (void)r; /* the stream is kept for the next object */
 }
 
 /* Number of compressed bytes zlib actually consumed. */
@@ -125,19 +131,27 @@ typedef struct {
     FILE *out;
     z_stream z;
     int zinit;
+    int level;
     int64_t written;
     unsigned char outbuf[CHUNK];
 } zwriter;
 
 static int zw_init(zwriter *w, FILE *out, int level)
 {
-    memset(&w->z, 0, sizeof w->z);
     w->out = out;
     w->written = 0;
-    w->zinit = 0;
-    if (deflateInit(&w->z, level) != Z_OK)
+    if (w->zinit && w->level != level) {
+        deflateEnd(&w->z);
+    }
+    if (!w->zinit) {
+        memset(&w->z, 0, sizeof w->z);
+        if (deflateInit(&w->z, level) != Z_OK)
+            return -1;
+        w->zinit = 1;
+        w->level = level;
+    } else if (deflateReset(&w->z) != Z_OK) {
         return -1;
-    w->zinit = 1;
+    }
     return 0;
 }
 
@@ -182,9 +196,7 @@ static int zw_finish(zwriter *w)
 
 static void zw_end(zwriter *w)
 {
-    if (w->zinit)
-        deflateEnd(&w->z);
-    w->zinit = 0;
+    (void)w; /* the stream is kept for the next object */
 }
 
 /* ------------------------------------------------------------------ */
@@ -206,7 +218,6 @@ static int lw_open(loose_writer *lw, const char *objdir, const char *type, int64
 
     lw->objdir = objdir;
     lw->f = NULL;
-    lw->zw.zinit = 0;
     mbedtls_sha1_init(&lw->sha);
     mbedtls_sha1_starts(&lw->sha);
     if (objdir) {
@@ -288,6 +299,12 @@ static int lw_finish(loose_writer *lw, unsigned char sha[20])
     }
     return 0;
 }
+
+/* Single instances, reused by every call (see zr_init). */
+static zreader g_reader;
+static loose_writer g_lw;
+static zwriter g_pw;
+static unsigned char g_buf[CHUNK];
 
 static const char *check_type(lua_State *L, int idx)
 {
@@ -382,11 +399,9 @@ static int l_pack_inflate(lua_State *L)
 
     if (fseeko(f, (off_t)off, SEEK_SET) != 0)
         return pg_fail(L, "seek");
-    r = malloc(sizeof *r);
-    if (!r || zr_init(r, f) != 0) {
-        free(r);
-        return luaL_error(L, "out of memory");
-    }
+    r = &g_reader;
+    if (zr_init(r, f) != 0)
+        return luaL_error(L, "zlib initialisation failed");
     out = luaL_buffinitsize(L, &b, (size_t)size);
     got = size > 0 ? zr_read(r, (unsigned char *)out, (size_t)size, &err) : 0;
     /* Keep reading while the stream continues in tiny pieces. */
@@ -409,14 +424,47 @@ static int l_pack_inflate(lua_State *L)
         err = "object size mismatch";
     if (got < 0 || err) {
         zr_end(r);
-        free(r);
         return luaL_error(L, "pack_inflate at %I: %s", off, err ? err : "error");
     }
     luaL_pushresultsize(&b, (size_t)size);
     lua_pushinteger(L, (lua_Integer)zr_consumed(r));
     zr_end(r);
-    free(r);
     return 2;
+}
+
+/* pack_skip(fh, offset, size) -> consumed
+ * Inflates and discards a pack entry, only to learn where it ends (and to
+ * validate it) without creating a Lua string. */
+static int l_pack_skip(lua_State *L)
+{
+    FILE *f = pg_checkfile(L, 1);
+    lua_Integer off = luaL_checkinteger(L, 2);
+    lua_Integer size = luaL_checkinteger(L, 3);
+    zreader *r;
+    unsigned char *buf;
+    const char *err = NULL;
+    int64_t total = 0, consumed;
+
+    if (fseeko(f, (off_t)off, SEEK_SET) != 0)
+        return pg_fail(L, "seek");
+    r = &g_reader;
+    buf = g_buf;
+    if (zr_init(r, f) != 0)
+        return luaL_error(L, "zlib initialisation failed");
+    for (;;) {
+        long got = zr_read(r, buf, CHUNK, &err);
+        if (got <= 0)
+            break;
+        total += got;
+    }
+    if (!err && total != size)
+        err = "object size mismatch";
+    consumed = zr_consumed(r);
+    zr_end(r);
+    if (err)
+        return luaL_error(L, "pack entry at %I: %s", off, err);
+    lua_pushinteger(L, (lua_Integer)consumed);
+    return 1;
 }
 
 /* pack_inflate_loose(fh, offset, size, objdir, type) -> sha, consumed
@@ -437,13 +485,11 @@ static int l_pack_inflate_loose(lua_State *L)
 
     if (fseeko(f, (off_t)off, SEEK_SET) != 0)
         return pg_fail(L, "seek");
-    r = malloc(sizeof *r);
-    lw = malloc(sizeof *lw);
-    buf = malloc(CHUNK);
-    if (!r || !lw || !buf || zr_init(r, f) != 0) {
-        free(r), free(lw), free(buf);
-        return luaL_error(L, "out of memory");
-    }
+    r = &g_reader;
+    lw = &g_lw;
+    buf = g_buf;
+    if (zr_init(r, f) != 0)
+        return luaL_error(L, "zlib initialisation failed");
     if (lw_open(lw, objdir, type, size) != 0) {
         err = strerror(errno);
         lw_abort(lw);
@@ -473,7 +519,6 @@ static int l_pack_inflate_loose(lua_State *L)
     }
     consumed = zr_consumed(r);
     zr_end(r);
-    free(r), free(lw), free(buf);
     if (err)
         return luaL_error(L, "pack entry at %I: %s", off, err);
     lua_pushlstring(L, (const char *)sha, 20);
@@ -500,7 +545,7 @@ static int open_loose(zreader *r, FILE **fp, const char *path, int *type_idx,
         return -1;
     }
     if (zr_init(r, *fp) != 0) {
-        *err = "out of memory";
+        *err = "zlib initialisation failed";
         return -1;
     }
     while (!nul) {
@@ -541,7 +586,7 @@ static int open_loose(zreader *r, FILE **fp, const char *path, int *type_idx,
 static int l_loose_header(lua_State *L)
 {
     const char *path = luaL_checkstring(L, 1);
-    zreader *r = malloc(sizeof *r);
+    zreader *r = &g_reader;
     FILE *f = NULL;
     int t;
     int64_t size;
@@ -550,12 +595,8 @@ static int l_loose_header(lua_State *L)
     const char *err = NULL;
     int rc;
 
-    if (!r)
-        return luaL_error(L, "out of memory");
-    r->zinit = 0;
     rc = open_loose(r, &f, path, &t, &size, pre, &prelen, &err);
     zr_end(r);
-    free(r);
     if (f)
         fclose(f);
     if (rc != 0) {
@@ -572,7 +613,7 @@ static int l_loose_header(lua_State *L)
 static int l_loose_read(lua_State *L)
 {
     const char *path = luaL_checkstring(L, 1);
-    zreader *r = malloc(sizeof *r);
+    zreader *r = &g_reader;
     FILE *f = NULL;
     int t;
     int64_t size, total;
@@ -582,9 +623,6 @@ static int l_loose_read(lua_State *L)
     luaL_Buffer b;
     char *out;
 
-    if (!r)
-        return luaL_error(L, "out of memory");
-    r->zinit = 0;
     if (open_loose(r, &f, path, &t, &size, pre, &prelen, &err) != 0)
         goto fail;
     if ((int64_t)prelen > size) {
@@ -604,7 +642,6 @@ static int l_loose_read(lua_State *L)
         total += got;
     }
     zr_end(r);
-    free(r);
     fclose(f);
     luaL_pushresultsize(&b, (size_t)size);
     lua_pushstring(L, obj_types[t]);
@@ -612,7 +649,6 @@ static int l_loose_read(lua_State *L)
     return 2;
 fail:
     zr_end(r);
-    free(r);
     if (f)
         fclose(f);
     return luaL_error(L, "%s: %s", path, err);
@@ -626,23 +662,18 @@ static int l_loose_write(lua_State *L)
     const char *type = check_type(L, 2);
     size_t n;
     const char *s = luaL_checklstring(L, 3, &n);
-    loose_writer *lw = malloc(sizeof *lw);
+    loose_writer *lw = &g_lw;
     unsigned char sha[20];
 
-    if (!lw)
-        return luaL_error(L, "out of memory");
     if (lw_open(lw, objdir, type, (int64_t)n) != 0 || lw_write(lw, s, n) != 0) {
         int en = errno;
         lw_abort(lw);
-        free(lw);
         return luaL_error(L, "cannot write object: %s", strerror(en));
     }
     if (lw_finish(lw, sha) != 0) {
         int en = errno;
-        free(lw);
         return luaL_error(L, "cannot write object: %s", strerror(en));
     }
-    free(lw);
     lua_pushlstring(L, (const char *)sha, 20);
     return 1;
 }
@@ -666,12 +697,8 @@ static int l_hash_file(lua_State *L)
         fclose(f);
         return pg_fail(L, path);
     }
-    lw = malloc(sizeof *lw);
-    buf = malloc(CHUNK);
-    if (!lw || !buf) {
-        free(lw), free(buf), fclose(f);
-        return luaL_error(L, "out of memory");
-    }
+    lw = &g_lw;
+    buf = g_buf;
     if (lw_open(lw, objdir, "blob", (int64_t)st.st_size) != 0) {
         err = strerror(errno);
     } else {
@@ -697,7 +724,7 @@ static int l_hash_file(lua_State *L)
         lw_abort(lw);
     else if (lw_finish(lw, sha) != 0)
         err = strerror(errno);
-    free(lw), free(buf), fclose(f);
+    fclose(f);
     if (err)
         return luaL_error(L, "%s: %s", path, err);
     lua_pushlstring(L, (const char *)sha, 20);
@@ -712,8 +739,8 @@ static int l_loose_to_file(lua_State *L)
     const char *path = luaL_checkstring(L, 1);
     const char *outpath = luaL_checkstring(L, 2);
     int mode = (int)luaL_checkinteger(L, 3);
-    zreader *r = malloc(sizeof *r);
-    unsigned char *buf = malloc(CHUNK);
+    zreader *r = &g_reader;
+    unsigned char *buf = g_buf;
     FILE *f = NULL;
     int fd = -1, t;
     int64_t size, total = 0;
@@ -721,11 +748,6 @@ static int l_loose_to_file(lua_State *L)
     size_t prelen;
     const char *err = NULL;
 
-    if (!r || !buf) {
-        free(r), free(buf);
-        return luaL_error(L, "out of memory");
-    }
-    r->zinit = 0;
     if (open_loose(r, &f, path, &t, &size, pre, &prelen, &err) != 0)
         goto done;
     if (t != 2) {
@@ -760,7 +782,6 @@ done:
     if (fd >= 0 && close(fd) != 0 && !err)
         err = strerror(errno);
     zr_end(r);
-    free(r), free(buf);
     if (f)
         fclose(f);
     if (err)
@@ -776,9 +797,9 @@ static int l_loose_to_pack(lua_State *L)
     const char *path = luaL_checkstring(L, 1);
     FILE *out = pg_checkfile(L, 2);
     int level = (int)luaL_optinteger(L, 3, Z_DEFAULT_COMPRESSION);
-    zreader *r = malloc(sizeof *r);
-    zwriter *w = malloc(sizeof *w);
-    unsigned char *buf = malloc(CHUNK);
+    zreader *r = &g_reader;
+    zwriter *w = &g_pw;
+    unsigned char *buf = g_buf;
     FILE *f = NULL;
     int t;
     int64_t size, total = 0;
@@ -787,12 +808,6 @@ static int l_loose_to_pack(lua_State *L)
     uint64_t sz;
     const char *err = NULL;
 
-    if (!r || !w || !buf) {
-        free(r), free(w), free(buf);
-        return luaL_error(L, "out of memory");
-    }
-    r->zinit = 0;
-    w->zinit = 0;
     if (open_loose(r, &f, path, &t, &size, pre, &prelen, &err) != 0)
         goto done;
     /* entry header: type in bits 4-6 of the first byte, size as a
@@ -834,7 +849,6 @@ static int l_loose_to_pack(lua_State *L)
 done:
     zw_end(w);
     zr_end(r);
-    free(r), free(w), free(buf);
     if (f)
         fclose(f);
     if (err)
@@ -851,6 +865,7 @@ void pg_register_zlib(lua_State *L)
         {"deflate", l_deflate},
         {"pack_inflate", l_pack_inflate},
         {"pack_inflate_loose", l_pack_inflate_loose},
+        {"pack_skip", l_pack_skip},
         {"loose_header", l_loose_header},
         {"loose_read", l_loose_read},
         {"loose_write", l_loose_write},

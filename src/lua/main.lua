@@ -130,6 +130,9 @@ function commands.push(args, i)
 end
 
 function M.main(args)
+  -- collect a little earlier than Lua's default (pause 200): lower peak
+  -- memory on small devices for a negligible CPU cost
+  collectgarbage("incremental", 150, 100)
   local i = 1
   while i <= #args do
     local a = args[i]

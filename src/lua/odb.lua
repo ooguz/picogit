@@ -82,8 +82,12 @@ function ODB:read_typed(id, want)
   return data
 end
 
+-- Hash first and only compress/write objects that are missing: most trees
+-- written by commit already exist, and flash writes are expensive.
 function ODB:write(otype, data)
-  return core.tohex(core.loose_write(self.dir, otype, data))
+  local id = core.tohex(core.loose_write(nil, otype, data))
+  if not self:has(id) then core.loose_write(self.dir, otype, data) end
+  return id
 end
 
 -- Store a work tree file as a blob; returns id, size.

@@ -144,8 +144,7 @@ function M.diff_trees(repo, old_id, new_id, prefix, out)
 end
 
 local function index_mtime(repo)
-  local st = core.lstat(repo.index_path)
-  return st and st.mtime
+  return core.lstat(repo.index_path)
 end
 
 -- Is the work tree file at e.name unchanged relative to index entry e?
@@ -288,10 +287,12 @@ function M.snapshot(repo, entries)
       mode = e and (e.mode == index.MODE_EXEC or e.mode == index.MODE_FILE) and e.mode
              or index.MODE_FILE
     end
-    local id
     if e and e.mode == mode and index.stat_matches(e, st, racy) then
-      id = e.id
-    elseif st.type == "link" then
+      out[#out + 1] = e -- unchanged: reuse the entry
+      return
+    end
+    local id
+    if st.type == "link" then
       id = repo.odb:write("blob", assert(core.readlink(path)))
     else
       id = repo.odb:write_file(path)

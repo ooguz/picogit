@@ -96,6 +96,14 @@ test_commit_identity_sources() {
         fail "commit without identity succeeded"
     fi
     grep -q "author identity unknown" err.txt
+    # ~/.gitconfig is the last resort
+    printf '[user]\n\tname = Global User\n\temail = global@example.com\n' > "$HOME/.gitconfig.user"
+    cp "$HOME/.gitconfig" "$HOME/.gitconfig.orig"
+    cat "$HOME/.gitconfig.user" >> "$HOME/.gitconfig"
+    (cd c && unset PICOGIT_AUTHOR_NAME PICOGIT_AUTHOR_EMAIL && pg commit -a -m "from global")
+    mv "$HOME/.gitconfig.orig" "$HOME/.gitconfig"
+    assert_eq "$(git -C c log -1 --format='%an <%ae>')" "Global User <global@example.com>"
+    echo 1b >> c/base.txt
     git -C c config user.name "Config User"
     git -C c config user.email "config@example.com"
     (cd c && unset PICOGIT_AUTHOR_NAME PICOGIT_AUTHOR_EMAIL && TZ=UTC-3 pg commit -a -m "from config")

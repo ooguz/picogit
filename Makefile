@@ -37,7 +37,7 @@ export ZIG_LOCAL_CACHE_DIR  := $(BUILD)/zig-cache
 
 ALL_TARGETS := host armv7 armv7hf aarch64 mipsel
 
-.PHONY: all $(ALL_TARGETS) test test-unit test-integration test-armv7 test-https \
+.PHONY: all $(ALL_TARGETS) test test-unit test-integration test-armv7 test-oldkernel test-https test-https-armv7 \
         sizes fetch clean distclean binary
 all: host
 
@@ -227,25 +227,54 @@ test-unit:
 
 test-integration:
 	@PICOGIT="$(PICOGIT_RUN) $(or $(PICOGIT_BIN),$(BUILD)/host/picogit)" \
+	    PICOGIT_DEV="$(PICOGIT_RUN) $(or $(PICOGIT_DEV_BIN),$(BUILD)/host/picogit-dev)" \
 	    bash $(TOP)/test/integration/run.sh
 
-# Runs the armv7 binaries under qemu-arm. Without a local qemu the tests
-# run inside the Docker image defined in ./Dockerfile.
+# Runs the armv7 binaries under qemu-arm, by default on a Cortex-A9 model
+# with the FPU removed: any VFP/NEON instruction in the soft-float build
+# would die with SIGILL. Without a local qemu the tests run inside the
+# Docker image defined in ./Dockerfile.
+QEMU_CPU ?= cortex-a9,vfp=off,vfp-d32=off,neon=off
+export QEMU_CPU
+
 test-armv7: armv7
 ifneq ($(QEMU_ARM),)
 	@$(MAKE) --no-print-directory test-unit test-integration PICOGIT_RUN=$(QEMU_ARM) \
 	    PICOGIT_BIN=$(BUILD)/armv7/picogit PICOGIT_DEV_BIN=$(BUILD)/armv7/picogit-dev
 else
 	docker build -q -t picogit-test -f $(TOP)/Dockerfile --target test $(TOP)
-	docker run --rm -v $(TOP):/src -w /src -u $$(id -u):$$(id -g) -e HOME=/tmp picogit-test \
+	docker run --rm -v $(TOP):/src -w /src -u $$(id -u):$$(id -g) -e HOME=/tmp \
+	    -e QEMU_CPU="$(QEMU_CPU)" picogit-test \
 	    make --no-print-directory test-unit test-integration PICOGIT_RUN=qemu-arm \
 	    PICOGIT_BIN=/src/build/armv7/picogit PICOGIT_DEV_BIN=/src/build/armv7/picogit-dev
 endif
+
+# The armv7 tests again with getrandom(2) failing with ENOSYS, as on
+# kernels older than 3.17 (see test/oldkernel/enosys.c).
+ENOSYS := $(BUILD)/tools/enosys
+$(ENOSYS): $(TOP)/test/oldkernel/enosys.c $(PREREQ_CC)
+	@mkdir -p $(dir $@)
+	@echo "  CC      enosys"
+	@$(if $(PREREQ_CC),$(ZIG) cc -target x86_64-linux-musl,$(HOSTCC)) -static -Os -o $@ $<
+
+test-oldkernel: armv7 $(ENOSYS)
+	docker build -q -t picogit-test -f $(TOP)/Dockerfile --target test $(TOP)
+	docker run --rm -v $(TOP):/src -w /src -u $$(id -u):$$(id -g) -e HOME=/tmp \
+	    -e QEMU_CPU="$(QEMU_CPU)" picogit-test \
+	    make --no-print-directory test-unit test-integration \
+	    PICOGIT_RUN="/src/build/tools/enosys qemu-arm" \
+	    PICOGIT_BIN=/src/build/armv7/picogit PICOGIT_DEV_BIN=/src/build/armv7/picogit-dev
 
 # Clones a public repository over HTTPS with the embedded CA bundle.
 test-https: host
 	@PICOGIT="$(PICOGIT_RUN) $(or $(PICOGIT_BIN),$(BUILD)/host/picogit)" \
 	    bash $(TOP)/test/integration/https.sh
+
+test-https-armv7: armv7
+	docker build -q -t picogit-test -f $(TOP)/Dockerfile --target test $(TOP)
+	docker run --rm -v $(TOP):/src -w /src -u $$(id -u):$$(id -g) -e HOME=/tmp \
+	    -e QEMU_CPU="$(QEMU_CPU)" picogit-test \
+	    env PICOGIT="qemu-arm /src/build/armv7/picogit" bash test/integration/https.sh
 
 sizes:
 	@for t in $(ALL_TARGETS); do f=$(BUILD)/$$t/picogit; \
