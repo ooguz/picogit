@@ -606,8 +606,8 @@ static int l_loose_read(lua_State *L)
     zr_end(r);
     free(r);
     fclose(f);
-    lua_pushstring(L, obj_types[t]);
     luaL_pushresultsize(&b, (size_t)size);
+    lua_pushstring(L, obj_types[t]);
     lua_insert(L, -2);
     return 2;
 fail:

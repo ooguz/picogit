@@ -6,6 +6,8 @@
 
 Paths:
   /<repo>/...            served by git http-backend (push enabled)
+  /__file/<name>         a file from <root>/files, sent with Content-Length
+  /__echo                echoes the request body (chunked or close-delimited)
   /redirect/<path>       301 redirect to /<path>
   /redirect307/<path>    307 redirect to /<path>
 
@@ -92,6 +94,30 @@ class Handler(BaseHTTPRequestHandler):
                 return
             user = ARGS.auth.split(":", 1)[0]
 
+        if path.startswith("/__file/"):
+            name = os.path.basename(path[len("/__file/"):])
+            fp = os.path.join(ARGS.root, "files", name)
+            if not os.path.isfile(fp):
+                self.send_simple(404, "not found")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(os.path.getsize(fp)))
+            self.end_headers()
+            with open(fp, "rb") as f:
+                shutil.copyfileobj(f, self.wfile)
+            return
+
+
+        if path == "/__echo":
+            with tempfile.TemporaryFile() as body:
+                self.read_body(body)
+                body.seek(0)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_stream(body)
+            return
+
         with tempfile.TemporaryFile() as body:
             length = self.read_body(body)
             body.seek(0)
@@ -128,21 +154,25 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(status)
             for k, v in headers:
                 self.send_header(k, v)
-            if ARGS.no_chunked:
-                self.send_header("Connection", "close")
-                self.close_connection = True
-                self.end_headers()
-                shutil.copyfileobj(proc.stdout, self.wfile)
-            else:
-                self.send_header("Transfer-Encoding", "chunked")
-                self.end_headers()
-                while True:
-                    chunk = proc.stdout.read1(65536)
-                    if not chunk:
-                        break
-                    self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
-                self.wfile.write(b"0\r\n\r\n")
+            self.send_stream(proc.stdout)
             proc.wait()
+
+    def send_stream(self, src):
+        """Finish the headers and send src as a chunked or close-delimited body."""
+        if ARGS.no_chunked:
+            self.send_header("Connection", "close")
+            self.close_connection = True
+            self.end_headers()
+            shutil.copyfileobj(src, self.wfile)
+            return
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        while True:
+            chunk = src.read1(65536) if hasattr(src, "read1") else src.read(65536)
+            if not chunk:
+                break
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
+        self.wfile.write(b"0\r\n\r\n")
 
 
 def main():

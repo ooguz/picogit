@@ -7,6 +7,7 @@ set -u
 
 TOP=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 PICOGIT=${PICOGIT:-$TOP/build/host/picogit}
+PICOGIT_DEV=${PICOGIT_DEV:-$TOP/build/host/picogit-dev}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/picogit-test.XXXXXX")
 SRV=$WORK/srv
 SERVER_PID=
@@ -43,6 +44,49 @@ cleanup() {
 trap cleanup EXIT
 
 pg() { $PICOGIT "$@"; }
+pgdev() { $PICOGIT_DEV "$@"; }
+
+# extra_server [server options...] -> starts an additional server for the
+# current test (killed when the test's subshell exits); sets XBASE.
+extra_server() {
+    local pf=$WORK/xport.$BASHPID.$RANDOM
+    python3 -I "$TOP/test/server/git_http_server.py" --root "$SRV" \
+        --port-file "$pf" "$@" >>"$WORK/xserver.log" 2>&1 &
+    local pid=$!
+    XPIDS="${XPIDS:-} $pid"
+    trap 'kill $XPIDS 2>/dev/null' EXIT
+    for _ in $(seq 100); do
+        [ -s "$pf" ] && break
+        sleep 0.05
+    done
+    case " $* " in
+        *" --tls "*) XBASE="https://localhost:$(cat "$pf")" ;;
+        *) XBASE="http://127.0.0.1:$(cat "$pf")" ;;
+    esac
+}
+
+# make_certs DIR: a test CA plus server certificates for "localhost":
+# DIR/ca.pem, DIR/server.{pem,key} (valid), DIR/expired.{pem,key}
+make_certs() {
+    local d=$1
+    [ -f "$d/server.pem" ] && return 0
+    mkdir -p "$d"
+    (
+        cd "$d"
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+            -keyout ca.key -out ca.pem -days 30 -subj "/CN=picogit test CA" 2>/dev/null
+        for n in server expired; do
+            openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+                -keyout $n.key -out $n.csr -subj "/CN=localhost" 2>/dev/null
+        done
+        printf 'subjectAltName=DNS:localhost\n' > ext.cnf
+        openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
+            -days 30 -extfile ext.cnf -out server.pem 2>/dev/null
+        openssl x509 -req -in expired.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
+            -not_before 20200101000000Z -not_after 20210101000000Z \
+            -extfile ext.cnf -out expired.pem 2>/dev/null
+    )
+}
 
 # start_server [server options...] -> sets PORT and BASE
 start_server() {
@@ -115,8 +159,11 @@ assert_file() { # assert_file PATH CONTENT
 }
 
 run_test() {
-    local name=$1 log=$WORK/$1.log
-    if ( set -e; cd "$WORK"; "$name" ) >"$log" 2>&1; then
+    local name=$1 log=$WORK/$1.log rc
+    # Not inside `if`: errexit is ignored in a condition context.
+    ( set -e; cd "$WORK"; "$name" ) >"$log" 2>&1
+    rc=$?
+    if [ "$rc" = 0 ]; then
         PASS=$((PASS + 1))
         printf "  ok    %s\n" "$name"
     else

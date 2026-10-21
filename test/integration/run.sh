@@ -8,6 +8,8 @@
 echo "integration tests with: $PICOGIT"
 start_server
 
+for f in "$(dirname "$0")"/t_*.sh; do . "$f"; done
+
 test_version() {
     pg --version | grep -q '^picogit '
 }
