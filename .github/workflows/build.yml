@@ -33,7 +33,7 @@ jobs:
 
       - name: Build all targets
         run: |
-          make -j"$(nproc)" host armv7 armv7hf aarch64 mipsel mips
+          make -j"$(nproc)" host armv7 armv7hf aarch64 mipsel mips x86 riscv64
           make sizes | tee sizes.txt
 
       - name: Tests (host)
@@ -45,13 +45,18 @@ jobs:
       - name: Tests (armv7, getrandom unavailable as on kernels < 3.17)
         run: make test-oldkernel
 
+      - name: Tests (32-bit x86 on a Pentium model, RISC-V 64)
+        run: |
+          make test-qemu-x86
+          make test-qemu-riscv64
+
       - name: HTTPS against GitHub
         run: make test-https
 
       - name: Collect binaries
         run: |
           mkdir -p dist
-          for t in armv7 armv7hf aarch64 mipsel mips; do
+          for t in armv7 armv7hf aarch64 mipsel mips x86 riscv64; do
             cp build/$t/picogit dist/picogit-linux-$t
           done
           cp build/host/picogit dist/picogit-linux-x86_64

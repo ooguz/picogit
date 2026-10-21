@@ -6,10 +6,13 @@
 #   make aarch64    AArch64, static musl
 #   make mipsel     MIPS32r2 little-endian, static musl, soft-float
 #   make mips       MIPS32r2 big-endian (e.g. OpenWrt ath79), soft-float
+#   make x86        32-bit x86 (i586 baseline), static musl
+#   make riscv64    RISC-V 64 (rv64gc, lp64d), static musl
 #   make cross CC=... any other target with an external cross compiler
 #                   (used by the OpenWrt package, see openwrt/picogit/Makefile)
 #   make test       unit + integration tests with the host binary
 #   make test-armv7 the same tests with the armv7 binary under qemu-arm
+#   make test-qemu-<target>  the same for any other target (e.g. riscv64)
 #
 # Toolchain: a pinned zig release (downloaded on first use) is used as
 # `zig cc`.  Any other cross compiler can be used instead with
@@ -40,7 +43,7 @@ HOSTLUA     := $(BUILD)/hostlua/lua
 export ZIG_GLOBAL_CACHE_DIR := $(BUILD)/zig-cache
 export ZIG_LOCAL_CACHE_DIR  := $(BUILD)/zig-cache
 
-ALL_TARGETS := host armv7 armv7hf aarch64 mipsel mips
+ALL_TARGETS := host armv7 armv7hf aarch64 mipsel mips x86 riscv64
 
 .PHONY: all $(ALL_TARGETS) test test-unit test-integration test-armv7 test-oldkernel test-https test-https-armv7 \
         sizes fetch clean distclean binary
@@ -131,6 +134,13 @@ else ifeq ($(TARGET),mips)
   ZTARGET := mips-linux-musleabi
   ZCPU    := -mcpu=mips32r2
   EMBED_MODE := source
+else ifeq ($(TARGET),x86)
+  # i586: also runs on old x86 boards (Geode, Vortex86 class) without cmov
+  ZTARGET := x86-linux-musl
+  ZCPU    := -mcpu=i586
+else ifeq ($(TARGET),riscv64)
+  ZTARGET := riscv64-linux-musl
+  ZCPU    := -mcpu=baseline_rv64
 else ifeq ($(TARGET),cross)
   ifeq ($(origin CC),default)
     $(error TARGET=cross needs an external compiler: make cross CC=...)
@@ -252,11 +262,10 @@ test-integration:
 # would die with SIGILL. Without a local qemu the tests run inside the
 # Docker image defined in ./Dockerfile.
 QEMU_CPU ?= cortex-a9,vfp=off,vfp-d32=off,neon=off
-export QEMU_CPU
 
 test-armv7: armv7
 ifneq ($(QEMU_ARM),)
-	@$(MAKE) --no-print-directory test-unit test-integration PICOGIT_RUN=$(QEMU_ARM) \
+	@QEMU_CPU="$(QEMU_CPU)" $(MAKE) --no-print-directory test-unit test-integration PICOGIT_RUN=$(QEMU_ARM) \
 	    PICOGIT_BIN=$(BUILD)/armv7/picogit PICOGIT_DEV_BIN=$(BUILD)/armv7/picogit-dev
 else
 	docker build -q -t picogit-test -f $(TOP)/Dockerfile --target test $(TOP)
@@ -276,7 +285,7 @@ $(ENOSYS): $(TOP)/test/oldkernel/enosys.c $(PREREQ_CC)
 
 test-oldkernel: armv7 $(ENOSYS)
 ifneq ($(QEMU_ARM),)
-	@$(MAKE) --no-print-directory test-unit test-integration \
+	@QEMU_CPU="$(QEMU_CPU)" $(MAKE) --no-print-directory test-unit test-integration \
 	    PICOGIT_RUN="$(ENOSYS) $(QEMU_ARM)" \
 	    PICOGIT_BIN=$(BUILD)/armv7/picogit PICOGIT_DEV_BIN=$(BUILD)/armv7/picogit-dev
 else
@@ -287,6 +296,31 @@ else
 	    PICOGIT_RUN="/src/build/tools/enosys qemu-arm" \
 	    PICOGIT_BIN=/src/build/armv7/picogit PICOGIT_DEV_BIN=/src/build/armv7/picogit-dev
 endif
+
+# Any other target under its qemu-user emulator, e.g. make test-qemu-riscv64
+# (locally if the emulator is installed, otherwise in the Docker image).
+QEMU_armv7hf := qemu-arm
+QEMU_aarch64 := qemu-aarch64
+QEMU_mipsel  := qemu-mipsel
+QEMU_mips    := qemu-mips
+QEMU_x86     := qemu-i386
+QEMU_riscv64 := qemu-riscv64
+# CPU models without newer instructions, to prove the baseline holds
+QEMU_CPU_x86 := pentium
+
+test-qemu-%: %
+	@[ -n "$(QEMU_$*)" ] || { echo "no qemu emulator known for '$*'"; exit 1; }
+	@if command -v $(QEMU_$*) >/dev/null; then \
+	    $(if $(QEMU_CPU_$*),QEMU_CPU=$(QEMU_CPU_$*)) \
+	    $(MAKE) --no-print-directory test-unit test-integration PICOGIT_RUN=$(QEMU_$*) \
+	        PICOGIT_BIN=$(BUILD)/$*/picogit PICOGIT_DEV_BIN=$(BUILD)/$*/picogit-dev; \
+	else \
+	    docker build -q -t picogit-test -f $(TOP)/Dockerfile --target test $(TOP) >/dev/null && \
+	    docker run --rm -v $(TOP):/src -w /src -u $$(id -u):$$(id -g) -e HOME=/tmp \
+	        $(if $(QEMU_CPU_$*),-e QEMU_CPU=$(QEMU_CPU_$*)) picogit-test \
+	        make --no-print-directory test-unit test-integration PICOGIT_RUN=$(QEMU_$*) \
+	        PICOGIT_BIN=/src/build/$*/picogit PICOGIT_DEV_BIN=/src/build/$*/picogit-dev; \
+	fi
 
 # Clones a public repository over HTTPS with the embedded CA bundle.
 test-https: host

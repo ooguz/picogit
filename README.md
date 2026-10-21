@@ -93,7 +93,9 @@ below):
 | `picogit-linux-aarch64` | 64-bit ARM userland (OpenWrt filogic, mediatek, ipq807x, …) |
 | `picogit-linux-mipsel`  | MIPS32r2 little-endian (OpenWrt ramips: MT7621, MT76x8)      |
 | `picogit-linux-mips`    | MIPS32r2 big-endian (OpenWrt ath79)                          |
-| `picogit-linux-x86_64`  | PCs, x86 routers                                             |
+| `picogit-linux-x86_64`  | 64-bit PCs, x86 routers and NAS                              |
+| `picogit-linux-x86`     | 32-bit x86 (i586 and newer: old thin clients, Geode/Vortex86 boards, OpenWrt x86/legacy) |
+| `picogit-linux-riscv64` | 64-bit RISC-V Linux (rv64gc: VisionFive, Milk-V, OpenWrt d1/jh7110) |
 
 `uname -m` reports `armv7l` on 32-bit ARM. Some newer ASUS models run an
 aarch64 kernel with a 32-bit userland; they also need the **armv7** binary
@@ -218,7 +220,7 @@ build-time Lua). The cross compiler does not need to be installed.
 
 ```sh
 make armv7          # -> build/armv7/picogit
-make host armv7 armv7hf aarch64 mipsel mips
+make host armv7 armv7hf aarch64 mipsel mips x86 riscv64
 make sizes
 ```
 
@@ -242,6 +244,9 @@ Typical sizes of the stripped static binaries:
 | aarch64 | 654 KB |
 | mipsel | 898 KB |
 | mips (big-endian, Lua source embedded) | 935 KB |
+| x86 (i586) | 635 KB |
+| riscv64 | 611 KB |
+| x86_64 | 659 KB |
 
 The armv7 binary breaks down roughly as follows: Lua 180 KB, Mbed TLS
 230 KB, zlib 47 KB, picogit C code 27 KB, the CA bundle 95 KB (zlib
@@ -266,6 +271,7 @@ only portable between little-endian targets.
 ```sh
 make test              # unit + integration tests with the host binary
 make test-armv7        # the same tests, armv7 binary under qemu-arm
+make test-qemu-riscv64 # the same for any other target (x86, aarch64, mipsel, ...)
 make test-oldkernel    # armv7 again, with getrandom() returning ENOSYS
 make test-https        # clone public repositories from GitHub over HTTPS
 make test-https-armv7  # the same with the armv7 binary
@@ -293,7 +299,9 @@ fresh `git clone` of the remote). The scenarios cover:
 Unit tests cover pkt-line, side-band, deltas, pack read/write, index and
 config round trips, and gitignore matching.
 
-`make test-armv7` runs qemu with a Cortex-A9 model **without an FPU**
+`make test-qemu-x86` runs on a Pentium model (no `cmov` or other i686
+instructions) to hold the i586 baseline. `make test-armv7` runs qemu with
+a Cortex-A9 model **without an FPU**
 (`QEMU_CPU=cortex-a9,vfp=off,vfp-d32=off,neon=off`). A single VFP/NEON
 instruction in the soft-float build would crash with SIGILL; the
 hard-float build indeed does. Without a local `qemu-arm`, the tests run in

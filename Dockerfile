@@ -16,4 +16,4 @@ FROM base AS test
 FROM base AS build
 WORKDIR /src
 COPY . .
-RUN make host armv7 armv7hf aarch64 mipsel mips && make sizes
+RUN make host armv7 armv7hf aarch64 mipsel mips x86 riscv64 && make sizes
