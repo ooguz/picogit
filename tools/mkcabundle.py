@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Converts a PEM CA bundle into a C file with the certificates as a
 zlib-compressed concatenation of DER blobs (see src/c/http.c).
 

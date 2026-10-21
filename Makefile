@@ -5,12 +5,17 @@
 #   make armv7hf    ARMv7-A, static musl, hard-float (VFPv3-D16)
 #   make aarch64    AArch64, static musl
 #   make mipsel     MIPS32r2 little-endian, static musl, soft-float
+#   make mips       MIPS32r2 big-endian (e.g. OpenWrt ath79), soft-float
+#   make cross CC=... any other target with an external cross compiler
+#                   (used by the OpenWrt package, see openwrt/picogit/Makefile)
 #   make test       unit + integration tests with the host binary
 #   make test-armv7 the same tests with the armv7 binary under qemu-arm
 #
 # Toolchain: a pinned zig release (downloaded on first use) is used as
 # `zig cc`.  Any other cross compiler can be used instead with
 #   make armv7 CC=arm-linux-musleabi-gcc TARGET_CFLAGS="-march=armv7-a -mfloat-abi=soft -mthumb"
+# or, for targets without a predefined name,
+#   make cross CC=mips-linux-musl-gcc TARGET_CFLAGS="-march=mips32r2" EMBED_MODE=source
 
 TOP := $(abspath .)
 include $(TOP)/deps.mk
@@ -35,7 +40,7 @@ HOSTLUA     := $(BUILD)/hostlua/lua
 export ZIG_GLOBAL_CACHE_DIR := $(BUILD)/zig-cache
 export ZIG_LOCAL_CACHE_DIR  := $(BUILD)/zig-cache
 
-ALL_TARGETS := host armv7 armv7hf aarch64 mipsel
+ALL_TARGETS := host armv7 armv7hf aarch64 mipsel mips
 
 .PHONY: all $(ALL_TARGETS) test test-unit test-integration test-armv7 test-oldkernel test-https test-https-armv7 \
         sizes fetch clean distclean binary
@@ -49,6 +54,10 @@ endif
 # file list, hence the recursion.
 $(ALL_TARGETS): $(STAMP_SRC) $(HOSTLUA) $(DL)/$(CACERT_FILE) $(PREREQ_CC)
 	@$(MAKE) --no-print-directory TARGET=$@ binary
+
+.PHONY: cross
+cross: $(STAMP_SRC) $(HOSTLUA) $(DL)/$(CACERT_FILE)
+	@$(MAKE) --no-print-directory TARGET=cross binary
 
 # ---------------------------------------------------------------------------
 # Downloads (verified) and source extraction
@@ -118,6 +127,14 @@ else ifeq ($(TARGET),aarch64)
 else ifeq ($(TARGET),mipsel)
   ZTARGET := mipsel-linux-musleabi
   ZCPU    := -mcpu=mips32r2
+else ifeq ($(TARGET),mips)
+  ZTARGET := mips-linux-musleabi
+  ZCPU    := -mcpu=mips32r2
+  EMBED_MODE := source
+else ifeq ($(TARGET),cross)
+  ifeq ($(origin CC),default)
+    $(error TARGET=cross needs an external compiler: make cross CC=...)
+  endif
 else
   $(error unknown TARGET '$(TARGET)'; use one of: $(ALL_TARGETS))
 endif
@@ -258,12 +275,18 @@ $(ENOSYS): $(TOP)/test/oldkernel/enosys.c $(PREREQ_CC)
 	@$(if $(PREREQ_CC),$(ZIG) cc -target x86_64-linux-musl,$(HOSTCC)) -static -Os -o $@ $<
 
 test-oldkernel: armv7 $(ENOSYS)
+ifneq ($(QEMU_ARM),)
+	@$(MAKE) --no-print-directory test-unit test-integration \
+	    PICOGIT_RUN="$(ENOSYS) $(QEMU_ARM)" \
+	    PICOGIT_BIN=$(BUILD)/armv7/picogit PICOGIT_DEV_BIN=$(BUILD)/armv7/picogit-dev
+else
 	docker build -q -t picogit-test -f $(TOP)/Dockerfile --target test $(TOP)
 	docker run --rm -v $(TOP):/src -w /src -u $$(id -u):$$(id -g) -e HOME=/tmp \
 	    -e QEMU_CPU="$(QEMU_CPU)" picogit-test \
 	    make --no-print-directory test-unit test-integration \
 	    PICOGIT_RUN="/src/build/tools/enosys qemu-arm" \
 	    PICOGIT_BIN=/src/build/armv7/picogit PICOGIT_DEV_BIN=/src/build/armv7/picogit-dev
+endif
 
 # Clones a public repository over HTTPS with the embedded CA bundle.
 test-https: host

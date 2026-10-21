@@ -1,0 +1,79 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # git describe for the version string
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user openssl python3
+
+      - name: Cache downloads and toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            dl
+            .cache
+          key: deps-${{ hashFiles('deps.mk') }}
+
+      - name: Build all targets
+        run: |
+          make -j"$(nproc)" host armv7 armv7hf aarch64 mipsel mips
+          make sizes | tee sizes.txt
+
+      - name: Tests (host)
+        run: make test
+
+      - name: Tests (armv7 under qemu, FPU disabled)
+        run: make test-armv7
+
+      - name: Tests (armv7, getrandom unavailable as on kernels < 3.17)
+        run: make test-oldkernel
+
+      - name: HTTPS against GitHub
+        run: make test-https
+
+      - name: Collect binaries
+        run: |
+          mkdir -p dist
+          for t in armv7 armv7hf aarch64 mipsel mips; do
+            cp build/$t/picogit dist/picogit-linux-$t
+          done
+          cp build/host/picogit dist/picogit-linux-x86_64
+          (cd dist && sha256sum picogit-* > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: picogit-binaries
+          path: dist/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: picogit-binaries
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

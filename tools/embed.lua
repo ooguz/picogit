@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Generates a C file embedding Lua modules.
 --   lua embed.lua <bytecode|source> <out.c> <module.lua>...
 -- In bytecode mode each module is precompiled and stripped of debug info.
