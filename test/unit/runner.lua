@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Minimal unit test runner.
 --   picogit-dev --dev-run runner.lua <testdir> test_a.lua test_b.lua ...
 -- Each test file returns a table of name -> function. Test functions get a

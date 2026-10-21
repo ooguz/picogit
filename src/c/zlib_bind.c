@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * zlib bindings and the streaming object helpers built on them.
  *
@@ -399,6 +400,8 @@ static int l_pack_inflate(lua_State *L)
 
     if (fseeko(f, (off_t)off, SEEK_SET) != 0)
         return pg_fail(L, "seek");
+    if (size < 0 || (uint64_t)size > (uint64_t)(SIZE_MAX / 2))
+        return luaL_error(L, "pack entry at %I: invalid object size", off);
     r = &g_reader;
     if (zr_init(r, f) != 0)
         return luaL_error(L, "zlib initialisation failed");
@@ -447,6 +450,8 @@ static int l_pack_skip(lua_State *L)
 
     if (fseeko(f, (off_t)off, SEEK_SET) != 0)
         return pg_fail(L, "seek");
+    if (size < 0 || (uint64_t)size > (uint64_t)(SIZE_MAX / 2))
+        return luaL_error(L, "pack entry at %I: invalid object size", off);
     r = &g_reader;
     buf = g_buf;
     if (zr_init(r, f) != 0)
@@ -485,6 +490,8 @@ static int l_pack_inflate_loose(lua_State *L)
 
     if (fseeko(f, (off_t)off, SEEK_SET) != 0)
         return pg_fail(L, "seek");
+    if (size < 0 || (uint64_t)size > (uint64_t)(SIZE_MAX / 2))
+        return luaL_error(L, "pack entry at %I: invalid object size", off);
     r = &g_reader;
     lw = &g_lw;
     buf = g_buf;
@@ -754,7 +761,9 @@ static int l_loose_to_file(lua_State *L)
         err = "not a blob";
         goto done;
     }
-    fd = open(outpath, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, mode);
+    /* The caller removed the path; O_EXCL|O_NOFOLLOW guarantee that we
+     * create a new file and never write through a symlink planted there. */
+    fd = open(outpath, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode);
     if (fd < 0) {
         err = strerror(errno);
         goto done;

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- The git index (.git/index), version 2 without extensions.
 --
 -- Version 3 files (extended flags) are read as well; extensions written by

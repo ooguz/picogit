@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Smart HTTP transport: ref discovery, upload-pack (fetch) and
 -- receive-pack (push).
 --
@@ -69,7 +70,7 @@ function M.new(url)
     if p then user, pass, source = l, p, "netrc" end
   end
   local base = util.redact_url(url):gsub("/+$", "")
-  local remote = { base = base, host = u.host, cred_source = source }
+  local remote = { base = base, origin = http.origin(u), cred_source = source }
   if pass then
     remote.authorization = "Basic " .. util.base64((user or "") .. ":" .. pass)
   end
@@ -100,7 +101,7 @@ local function request(remote, method, path, headers, body)
     headers = headers,
     body = body,
     authorization = remote.authorization,
-    auth_host = remote.host,
+    auth_origin = remote.origin,
   }
 end
 
@@ -124,11 +125,11 @@ function M.discover(remote, service, want_v2)
   if final and final ~= remote.base then
     util.trace("remote redirected to %s", final)
     remote.base = final
-    local u = http.parse_url(final)
-    if u.host ~= remote.host then
+    local origin = http.origin(http.parse_url(final))
+    if origin ~= remote.origin then
       -- never send credentials to a host we were redirected to
       remote.authorization = nil
-      remote.host = u.host
+      remote.origin = origin
     end
   end
   local ctype = r.headers["content-type"] or ""

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # pull scenarios (M3)
 
 # upstream NAME: bare repo + a real-git working clone in $PWD/up
@@ -171,4 +172,33 @@ test_pull_many_times() {
     done
     [ ! -e c/round.txt ] || [ "$(cat c/round.txt)" = "round 4" ] || fail "bad final state"
     assert_eq "$(git -C c rev-parse HEAD)" "$(git -C up rev-parse HEAD)"
+}
+
+test_pull_conflicts_are_detected_before_any_change() {
+    upstream p10
+    pg clone "$BASE/p10.git" c
+    # upstream: a.txt deleted, new file below "blocker/", old-dir becomes a file
+    git -C up rm -q a.txt
+    mkdir -p up/blocker && echo new > up/blocker/f
+    git -C up rm -rq old-dir && echo file > up/old-dir
+    push_up "conflicting changes"
+    # locally: an untracked file named like the new directory
+    echo mine > c/blocker
+    if (cd c && pg pull) 2>err.txt; then fail "pull over an untracked file succeeded"; fi
+    grep -q "untracked work tree files would be overwritten" err.txt
+    # nothing was changed: a.txt still exists, index and HEAD untouched
+    assert_file c/a.txt one
+    check_repo_except_untracked c blocker
+    rm c/blocker
+    # untracked content inside a directory that becomes a file
+    echo scratch > c/old-dir/untracked.txt
+    if (cd c && pg pull) 2>err.txt; then fail "pull deleted untracked content"; fi
+    grep -q "old-dir" err.txt
+    assert_file c/old-dir/untracked.txt scratch
+    assert_file c/a.txt one
+    rm c/old-dir/untracked.txt
+    (cd c && pg pull)
+    check_repo c
+    assert_file c/old-dir file
+    assert_file c/blocker/f new
 }

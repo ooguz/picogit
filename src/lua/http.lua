@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- HTTP requests on top of core.http_request: URL parsing, redirects,
 -- credentials and error reporting.
 local core = require("picogit.core")
@@ -46,6 +47,12 @@ function M.parse_url(url)
   return u
 end
 
+-- "scheme://host:port" of a parsed URL: credentials are bound to it, so
+-- they are never sent to another host, port or over plain http.
+function M.origin(u)
+  return u.scheme .. "://" .. u.host:lower() .. ":" .. u.port
+end
+
 -- Resolve a Location header against the URL it came from.
 function M.resolve(base, loc)
   if loc:match("^%a[%w+.-]*://") then return loc end
@@ -60,18 +67,23 @@ function M.resolve(base, loc)
 end
 
 -- request{ method=, url=, headers={...}, body={...},
---          authorization=, auth_host=, follow=true }
+--          authorization=, auth_origin=, follow=true }
 -- Returns { conn, status, headers, url } where url is the final URL after
--- redirects. The Authorization header is only ever sent to auth_host.
+-- redirects. The Authorization header is only ever sent to auth_origin.
 function M.request(req)
   local url = req.url
   local method = req.method or "GET"
+  local first_scheme
   for _ = 1, 10 do
     local u, perr = M.parse_url(url)
     if not u then util.die("invalid URL '%s': %s", util.redact_url(url), perr) end
+    first_scheme = first_scheme or u.scheme
+    if first_scheme == "https" and u.scheme ~= "https" then
+      util.die("refusing to follow a redirect from https to http (%s)", util.redact_url(url))
+    end
     local headers = { "User-Agent: " .. M.user_agent }
     for _, h in ipairs(req.headers or {}) do headers[#headers + 1] = h end
-    if req.authorization and u.host == req.auth_host then
+    if req.authorization and M.origin(u) == req.auth_origin then
       headers[#headers + 1] = "Authorization: " .. req.authorization
     end
     util.trace("http: %s %s", method, util.redact_url(url))
@@ -96,9 +108,6 @@ function M.request(req)
       util.die("unable to access '%s': redirected with status %d", util.redact_url(url), status)
     end
     url = M.resolve(url, loc)
-    if url:match("^http://") and req.url:match("^https://") then
-      util.die("refusing to follow a redirect from https to http (%s)", util.redact_url(url))
-    end
   end
   util.die("unable to access '%s': too many redirects", util.redact_url(req.url))
 end

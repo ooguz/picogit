@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * Mbed TLS 3.6 configuration for picogit: a TLS 1.2 / 1.3 *client* only,
  * trimmed to what public git hosts (GitHub, GitLab, Gitea, ...) negotiate.

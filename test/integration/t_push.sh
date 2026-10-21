@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # push scenarios (M5)
 
 push_remote() { # push_remote NAME: bare repo with history, picogit clone in c

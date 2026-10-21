@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* SHA-1 for Lua, on top of the Mbed TLS implementation. */
 #include <string.h>
 

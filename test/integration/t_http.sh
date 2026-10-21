@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # HTTP / HTTPS client tests (M1), through the picogit-dev helper script.
 
 fetch() { pgdev --dev-run "$TOP/test/integration/http_fetch.lua" "$@"; }
@@ -81,4 +82,24 @@ test_https_expired_certificate_hint() {
     out=$(fetch --cacert "$WORK/certs/ca.pem" "$XBASE/__file/empty.bin") || true
     echo "$out" | grep -q "certificate has expired"
     echo "$out" | grep -q "check the system time / NTP"
+}
+
+test_http_malformed_responses_fail_cleanly() {
+    local mode out
+    for mode in negative-length negative-chunk garbage-chunk huge-header endless-100 truncated; do
+        out=$(fetch "$BASE/__evil/$mode" 2>&1) || true
+        echo "$mode: $out"
+        case "$out" in
+            "ERROR unable to access"*|"ERROR network error: "*) ;;
+            *) fail "$mode: expected a clean error, got: $out" ;;
+        esac
+    done
+}
+
+test_https_no_downgrade_with_uppercase_scheme() {
+    make_certs "$WORK/certs"
+    extra_server --tls "$WORK/certs/server.pem" "$WORK/certs/server.key"
+    out=$(fetch --cacert "$WORK/certs/ca.pem" --auth u:secret "$XBASE/__downgrade/__file/x") || true
+    echo "$out"
+    echo "$out" | grep -q "refusing to follow a redirect from https to http"
 }

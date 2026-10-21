@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- zlib bindings and streaming object helpers.
 local core = require("picogit.core")
 local T = {}

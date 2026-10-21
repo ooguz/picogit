@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- pkt-line framing and side-band-64k demultiplexing.
 --
 -- A pkt-line is a 4-digit hex length (including the 4 bytes themselves)

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- The picogit commands: clone, pull, commit -a, push.
 local core = require("picogit.core")
 local config = require("config")
@@ -65,6 +66,7 @@ local function clone_into(args, remote)
 
   local prefixes = { "HEAD" }
   if args.branch then
+    util.check_refname("refs/heads/" .. args.branch)
     prefixes[2] = "refs/heads/" .. args.branch
     prefixes[3] = "refs/tags/" .. args.branch
   end
@@ -82,9 +84,27 @@ local function clone_into(args, remote)
     end
   else
     local target = listing.symrefs.HEAD
+    if target and not util.valid_refname(target) then
+      util.die("the remote HEAD points to an invalid ref name")
+    end
     branch = target and target:match("^refs/heads/(.+)$")
     want = listing.refs.HEAD
-    if not want and not branch then
+    if want and not branch then
+      -- no symref advertised (old server or detached remote HEAD): use a
+      -- branch at the same commit, preferring main and master
+      local heads = fetch.list_refs(remote, { "refs/heads/" }).refs
+      local names = {}
+      for name, id in pairs(heads) do
+        if id == want and util.valid_refname(name) then names[#names + 1] = name end
+      end
+      table.sort(names, function(a, b)
+        local pa = (a == "refs/heads/main" and 0) or (a == "refs/heads/master" and 1) or 2
+        local pb = (b == "refs/heads/main" and 0) or (b == "refs/heads/master" and 1) or 2
+        if pa ~= pb then return pa < pb end
+        return a < b
+      end)
+      branch = names[1] and names[1]:match("^refs/heads/(.+)$")
+    elseif not want and not branch then
       -- empty repository without unborn support: assume "main"
       branch = "main"
     end
@@ -120,9 +140,13 @@ local function clone_into(args, remote)
     end
     r.refs:set_symbolic("HEAD", "refs/heads/" .. branch)
   else
-    r.refs:update("refs/tags/" .. args.branch, want)
+    if is_tag then
+      r.refs:update("refs/tags/" .. args.branch, want)
+      util.info("Note: checking out tag '%s' (detached HEAD)", args.branch)
+    else
+      util.info("Note: the remote HEAD is not on a branch; checking it out detached")
+    end
     util.write_file(".git/HEAD", commit_id .. "\n")
-    util.info("Note: checking out tag '%s' (detached HEAD)", args.branch)
   end
 
   local n = 0

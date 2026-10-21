@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # commit -a scenarios (M4)
 
 # simple_remote NAME: bare repo with one commit, cloned by picogit into c

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Small helpers shared by the other modules.
 local core = require("picogit.core")
 
@@ -43,8 +44,12 @@ function M.warn(fmt, ...)
 end
 
 -- Remove credentials from a URL before it is shown anywhere.
+-- The user info ends at the *last* "@" of the authority (passwords may
+-- contain "@"), which is how http.parse_url reads it too.
 function M.redact_url(url)
-  return (url:gsub("^(%a[%w+.-]*://)[^/@]*@", "%1"))
+  local scheme, authority, rest = url:match("^(%a[%w+.-]*://)([^/?#]*)(.*)$")
+  if not scheme then return url end
+  return scheme .. authority:gsub("^.*@", "") .. rest
 end
 
 function M.percent_decode(s)
@@ -74,6 +79,30 @@ M.ZERO_ID = string.rep("0", 40)
 
 function M.is_hex_id(s)
   return type(s) == "string" and #s == 40 and s:match("^%x+$") ~= nil
+end
+
+-- git check-ref-format rules: ref names come from servers too and become
+-- file paths below .git, so ".." and friends must never get through.
+function M.valid_refname(name)
+  if type(name) ~= "string" or name == "" or name == "@" then return false end
+  if name:find("[%c ~^:?*%[\\\127]") or name:find("..", 1, true) or
+     name:find("@{", 1, true) or name:find("//", 1, true) then
+    return false
+  end
+  if name:sub(1, 1) == "/" or name:sub(-1) == "/" or name:sub(-1) == "." then
+    return false
+  end
+  for comp in name:gmatch("[^/]+") do
+    if comp:sub(1, 1) == "." or comp:sub(-5) == ".lock" then return false end
+  end
+  return true
+end
+
+function M.check_refname(name)
+  if not M.valid_refname(name) then
+    M.die("invalid ref name '%s'", tostring(name))
+  end
+  return name
 end
 
 -- Path helpers ------------------------------------------------------------

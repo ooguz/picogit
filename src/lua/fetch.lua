@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Shared fetch logic for clone and pull: listing remote refs and
 -- downloading + unpacking a pack.
 local core = require("picogit.core")

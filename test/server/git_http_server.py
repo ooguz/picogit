@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Small smart-HTTP git server for tests: runs `git http-backend` as a CGI.
 
   git_http_server.py --root DIR [--port N] [--port-file F] [--tls CERT KEY]
@@ -75,8 +76,28 @@ class Handler(BaseHTTPRequestHandler):
         out.flush()
         return out.tell()
 
+    EVIL = {
+        "negative-length": b"HTTP/1.1 200 OK\r\nContent-Length: -5\r\n\r\nhello",
+        "negative-chunk": b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n-5\r\nhello\r\n0\r\n\r\n",
+        "garbage-chunk": b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n",
+        "huge-header": b"HTTP/1.1 200 OK\r\n" + b"X-Pad: " + b"a" * 4000 + b"\r\n" * 1 +
+                       (b"X-Pad: " + b"a" * 4000 + b"\r\n") * 40 + b"Content-Length: 0\r\n\r\n",
+        "endless-100": b"HTTP/1.1 100 Continue\r\n\r\n" * 50 + b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",
+        "truncated": b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort",
+    }
+
     def handle_any(self):
         path, _, query = self.path.partition("?")
+        if path.startswith("/__evil/"):
+            # raw malformed responses for client robustness tests
+            self.wfile.write(self.EVIL[path[len("/__evil/"):]])
+            self.close_connection = True
+            return
+        if path.startswith("/__downgrade/"):
+            # absolute redirect with an upper-case http scheme
+            host = self.headers.get("Host", "localhost")
+            self.send_simple(302, "moved", [("Location", "HTTP://%s/%s" % (host, path[len("/__downgrade/"):]))])
+            return
         for prefix, code in (("/redirect/", 301), ("/redirect307/", 307)):
             if path.startswith(prefix):
                 loc = "/" + path[len(prefix):] + ("?" + query if query else "")

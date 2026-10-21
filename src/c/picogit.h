@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* picogit - shared declarations for the C core. */
 #ifndef PICOGIT_H
 #define PICOGIT_H

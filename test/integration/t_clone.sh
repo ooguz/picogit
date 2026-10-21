@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # clone scenarios (M2)
 
 # make_fixture NAME: a repository with three commits containing binary
@@ -209,4 +210,25 @@ test_clone_submodule_is_skipped() {
     grep -q "submodule 'vendor/lib' is not supported" err.txt
     [ -d c/vendor/lib ] || fail "submodule directory not created"
     check_repo c
+}
+
+test_clone_remote_head_without_symref() {
+    make_fixture fx11
+    # detached HEAD on the server: no symref is advertised (v2 and v0)
+    git --git-dir="$SRV/fx11.git" rev-parse main > "$WORK/head"
+    cp "$WORK/head" "$SRV/fx11.git/HEAD"
+    pg clone "$BASE/fx11.git" c
+    check_repo c
+    assert_eq "$(git -C c symbolic-ref HEAD)" refs/heads/main
+    extra_server --protocol-v0
+    pg clone "$XBASE/fx11.git" c0
+    check_repo c0
+    assert_eq "$(git -C c0 symbolic-ref HEAD)" refs/heads/main
+    # no branch at that commit at all: detached checkout
+    git --git-dir="$SRV/fx11.git" rev-parse main~1 > "$WORK/head"
+    cp "$WORK/head" "$SRV/fx11.git/HEAD"
+    pg clone "$BASE/fx11.git" d 2>err.txt
+    grep -q "not on a branch" err.txt
+    assert_eq "$(git -C d rev-parse HEAD)" "$(git --git-dir="$SRV/fx11.git" rev-parse main~1)"
+    check_repo d
 }

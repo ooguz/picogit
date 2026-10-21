@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- picogit command line: argument parsing and command dispatch.
 local core = require("picogit.core")
 local http = require("http")

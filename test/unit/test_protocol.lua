@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- pkt-line framing, side-band demultiplexing and delta application.
 local pktline = require("pktline")
 local delta = require("delta")

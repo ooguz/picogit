@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * enosys - run a command with selected syscalls failing with ENOSYS, to
  * emulate an old kernel (e.g. Linux 2.6.36 on some ASUS routers):

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Shared helpers for the integration tests (sourced by run.sh / https.sh).
 #
 # PICOGIT may contain an emulator prefix, e.g. "qemu-arm build/armv7/picogit",
@@ -83,9 +84,28 @@ make_certs() {
         printf 'subjectAltName=DNS:localhost\n' > ext.cnf
         openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
             -days 30 -extfile ext.cnf -out server.pem 2>/dev/null
-        openssl x509 -req -in expired.csr -CA ca.pem -CAkey ca.key -CAcreateserial \
-            -not_before 20200101000000Z -not_after 20210101000000Z \
-            -extfile ext.cnf -out expired.pem 2>/dev/null
+        # an already expired certificate; `openssl ca` accepts explicit
+        # dates on every OpenSSL version (x509 -not_before needs 3.4+)
+        : > index.txt
+        echo 01 > serial
+        cat > ca.cnf <<'CNF'
+[ ca ]
+default_ca = test_ca
+[ test_ca ]
+dir = .
+database = index.txt
+new_certs_dir = .
+serial = serial
+default_md = sha256
+policy = any
+[ any ]
+commonName = supplied
+[ san ]
+subjectAltName = DNS:localhost
+CNF
+        openssl ca -batch -config ca.cnf -cert ca.pem -keyfile ca.key -in expired.csr \
+            -out expired.pem -startdate 20200101000000Z -enddate 20210101000000Z \
+            -extensions san -notext 2>/dev/null
     )
 }
 
@@ -144,6 +164,15 @@ check_repo() {
     if [ -n "$out" ]; then
         echo "git status not clean in $1:"; echo "$out"; return 1
     fi
+}
+
+# check_repo_except_untracked DIR PATH: like check_repo, but PATH may be
+# present as an untracked file
+check_repo_except_untracked() {
+    git -C "$1" fsck --strict --no-progress >/dev/null
+    local out
+    out=$(git -C "$1" status --porcelain | grep -v "^?? $2\$" || true)
+    [ -z "$out" ] || { echo "git status not clean in $1:"; echo "$out"; return 1; }
 }
 
 fail() { echo "FAIL: $*"; return 1; }

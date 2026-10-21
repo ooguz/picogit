@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* picogit.core - aggregates the C helpers exposed to Lua. */
 #include <errno.h>
 #include <string.h>

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Network test: clone public repositories over HTTPS using the embedded CA
 # bundle, then verify them with real git.
 #   PICOGIT=... bash test/integration/https.sh

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Repository layout: discovery, creation, file system capability probes.
 local core = require("picogit.core")
 local config = require("config")

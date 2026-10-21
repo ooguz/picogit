@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- .gitignore matching (the subset of gitignore(5) used in practice):
 -- comments, "!" negation, trailing "/" for directories, anchoring by a
 -- leading or inner "/", "*", "?", "[...]" classes, "\" escapes and "**".

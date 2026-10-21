@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Integration tests: picogit against `git http-backend`, verified with real git.
 #   PICOGIT=path/to/picogit bash test/integration/run.sh
 #   ONLY=clone bash test/integration/run.sh   (run a subset)

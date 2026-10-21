@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Loose object database plus commit/tree/tag parsing and serialization.
 local core = require("picogit.core")
 local util = require("util")

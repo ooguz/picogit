@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Work tree operations: checkout of a tree, fast-forward update between two
 -- trees, and building a tree from the work tree (commit -a).
 local core = require("picogit.core")
@@ -24,11 +25,37 @@ end
 
 local function read_tree(repo, id, where)
   local entries = odb_mod.parse_tree(repo.odb:read_typed(id, "tree"))
+  local seen = {}
   for _, e in ipairs(entries) do
     check_name(e.name, where)
+    -- duplicate names (e.g. a symlink "d" and a directory "d") would let a
+    -- later entry be written through the earlier one
+    if seen[e.name] then
+      util.die("refusing to check out tree with duplicate entry '%s'", util.join(where, e.name))
+    end
+    seen[e.name] = true
     e.mode = odb_mod.normalize_mode(e.mode)
   end
   return entries
+end
+
+-- Directories verified (or created) by ensure_dir during one operation.
+local verified = {}
+
+-- mkdir -p inside the work tree that never follows a symbolic link: every
+-- existing component must be a real directory, so nothing can be written
+-- outside the work tree or into .git through a symlinked directory.
+local function ensure_dir(path)
+  if path == "" or verified[path] then return end
+  ensure_dir(util.dirname(path))
+  local st = core.lstat(path)
+  if not st then
+    local ok, err = core.mkdir(path)
+    if not ok then util.die("cannot create directory %s", err) end
+  elseif st.type ~= "dir" then
+    util.die("refusing to write below '%s': it is not a directory (%s)", path, st.type)
+  end
+  verified[path] = true
 end
 
 -- Flatten a tree into { path = { mode =, id = } } for every non-tree entry.
@@ -59,9 +86,9 @@ end
 
 -- Write one entry to the work tree and return its index entry.
 local function write_entry(repo, path, mode, id)
-  util.mkdirs(util.dirname(path))
+  ensure_dir(util.dirname(path))
   if mode == MODE_GITLINK then
-    if not core.lstat(path) then util.mkdirs(path) end
+    ensure_dir(path)
     util.warn("submodule '%s' is not supported and was not checked out", path)
     return index.gitlink_entry(path, id)
   end
@@ -88,11 +115,12 @@ end
 -- Check out a whole tree into an empty work tree; returns index entries.
 function M.checkout(repo, tree_id, progress)
   local entries = {}
+  verified = {}
   local function walk(id, prefix)
     for _, e in ipairs(read_tree(repo, id, prefix)) do
       local path = util.join(prefix, e.name)
       if e.mode == MODE_TREE then
-        util.mkdirs(path)
+        ensure_dir(path)
         walk(e.id, path)
       else
         entries[#entries + 1] = write_entry(repo, path, e.mode, e.id)
@@ -181,17 +209,59 @@ function M.update(repo, old_id, new_id, entries)
   for _, e in ipairs(entries) do by_name[e.name] = e end
   local racy = index_mtime(repo)
 
+  verified = {}
+  local removed = {} -- paths that this update deletes and does not recreate
+  for _, c in ipairs(changes) do
+    if c.old and not c.new then removed[c.path] = true end
+  end
+
+  -- Every existing ancestor of path must be a real directory, unless it is
+  -- itself removed by this update (file/symlink -> directory change).
+  local function ancestors_ok(path)
+    local chain, d = {}, util.dirname(path)
+    while d ~= "" do
+      table.insert(chain, 1, d)
+      d = util.dirname(d)
+    end
+    for _, a in ipairs(chain) do
+      local st = core.lstat(a)
+      if not st then return true end
+      if st.type ~= "dir" then return removed[a] == true end
+    end
+    return true
+  end
+
+  -- Does the directory contain anything besides files this update removes?
+  local function only_removed_inside(dir)
+    for _, name in ipairs(core.readdir(dir) or {}) do
+      local p = dir .. "/" .. name
+      local st = core.lstat(p)
+      if st and st.type == "dir" then
+        if not only_removed_inside(p) then return false end
+      elseif not removed[p] then
+        return false
+      end
+    end
+    return true
+  end
+
+  -- Check everything before touching the work tree, so that a refused
+  -- pull leaves it exactly as it was.
   local dirty, untracked = {}, {}
   for _, c in ipairs(changes) do
     local e = by_name[c.path]
-    if c.old then
+    if not ancestors_ok(c.path) then
+      untracked[#untracked + 1] = util.dirname(c.path)
+    elseif c.old then
       if not e or e.id ~= c.old.id or not entry_clean(repo, e, racy) then
         dirty[#dirty + 1] = c.path
       end
-    elseif not e and core.lstat(c.path) then
+    elseif not e then
       local st = core.lstat(c.path)
-      -- an existing directory is fine if only tracked files live below it
-      if st.type ~= "dir" then untracked[#untracked + 1] = c.path end
+      if st and (st.type ~= "dir" or
+                 (c.new.mode ~= MODE_GITLINK and not only_removed_inside(c.path))) then
+        untracked[#untracked + 1] = c.path
+      end
     end
   end
   if #dirty > 0 then

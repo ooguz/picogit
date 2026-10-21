@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Object database, pack read/write, index and config round trips.
 local core = require("picogit.core")
 local odb_mod = require("odb")

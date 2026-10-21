@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Runs every test/unit/test_*.lua with the development binary, which can
 # execute Lua files from disk with the embedded modules available.
 #   PICOGIT_DEV_BIN="qemu-arm build/armv7/picogit-dev" sh test/unit/run.sh

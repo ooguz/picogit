@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Reading .git/config (git's INI dialect) and writing a fresh one.
 --
 -- Keys are addressed as "section.key" or "section.subsection.key"; section

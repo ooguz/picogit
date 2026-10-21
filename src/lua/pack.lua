@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Packfile reader (explodes a pack into loose objects) and writer
 -- (delta-less packs for push).
 --

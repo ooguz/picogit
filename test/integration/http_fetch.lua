@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Test helper for picogit-dev --dev-run: performs one HTTP request with the
 -- picogit HTTP stack and prints "<status> <sha1 of body> <body length>".
 --   http_fetch.lua [--cacert F] [--insecure] [--post FILE] [--auth USER:PW] URL
@@ -24,7 +25,7 @@ local ok, err = pcall(function()
     body = post and { "prefix:", { file = post } } or nil,
     headers = post and { "Content-Type: application/octet-stream" } or nil,
     authorization = auth and ("Basic " .. util.base64(auth)),
-    auth_host = u.host,
+    auth_origin = http.origin(u),
   }
   local h = core.sha1_new()
   local n = 0

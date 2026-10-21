@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- Git delta (OFS_DELTA / REF_DELTA payload) application.
 --
 -- A delta starts with the base and result sizes as little-endian base-128

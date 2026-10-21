@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- References: HEAD, loose refs, packed-refs and .git/shallow.
 local core = require("picogit.core")
 local util = require("util")
@@ -60,6 +61,7 @@ function Refs:head()
 end
 
 function Refs:update(name, id)
+  util.check_refname(name)
   if not util.is_hex_id(id) then error("bad object id for " .. name) end
   local p = self.gitdir .. "/" .. name
   util.mkdirs(util.dirname(p))
@@ -67,6 +69,8 @@ function Refs:update(name, id)
 end
 
 function Refs:set_symbolic(name, target)
+  util.check_refname(name)
+  util.check_refname(target)
   util.write_file(self.gitdir .. "/" .. name, "ref: " .. target .. "\n")
 end
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
  * Minimal HTTP/1.1 client over plain TCP or TLS (Mbed TLS).
  *
@@ -492,10 +493,44 @@ static int send_file(http_conn *c, const char *path, int64_t expect)
     return 0;
 }
 
+/* Strict parser for Content-Length (base 10) and chunk sizes (base 16):
+ * digits only (a chunk size may be followed by ";extensions"), no sign, no
+ * overflow. Returns -1 for anything else. A negative value reaching the
+ * body reader would otherwise turn into a huge memcpy length. */
+static int64_t parse_size(const char *s, int base)
+{
+    int64_t v = 0;
+    int digits = 0;
+    while (*s == ' ' || *s == '\t')
+        s++;
+    for (; *s; s++) {
+        int d;
+        if (*s >= '0' && *s <= '9')
+            d = *s - '0';
+        else if (base == 16 && *s >= 'a' && *s <= 'f')
+            d = *s - 'a' + 10;
+        else if (base == 16 && *s >= 'A' && *s <= 'F')
+            d = *s - 'A' + 10;
+        else
+            break;
+        if (v > (INT64_MAX - d) / base)
+            return -1;
+        v = v * base + d;
+        digits++;
+    }
+    while (*s == ' ' || *s == '\t')
+        s++;
+    if (!digits || (*s && !(base == 16 && *s == ';')))
+        return -1;
+    return v;
+}
+
 static int parse_response_head(lua_State *L, http_conn *c, int *status)
 {
     char line[8192];
     long n;
+    size_t total = 0;
+    int interim = 0;
     for (;;) {
         int major, minor;
         n = conn_readline(c, line, sizeof line);
@@ -514,6 +549,11 @@ static int parse_response_head(lua_State *L, http_conn *c, int *status)
                 return -1;
             if (n == 0)
                 break;
+            total += (size_t)n;
+            if (total > MAX_HEADER) {
+                snprintf(c->err, sizeof c->err, "HTTP response header too large");
+                return -1;
+            }
             colon = strchr(line, ':');
             if (!colon)
                 continue;
@@ -538,6 +578,10 @@ static int parse_response_head(lua_State *L, http_conn *c, int *status)
         }
         if (*status >= 100 && *status < 200) {
             lua_pop(L, 2); /* interim response (100 Continue): ignore */
+            if (++interim > 10) {
+                snprintf(c->err, sizeof c->err, "too many interim HTTP responses");
+                return -1;
+            }
             continue;
         }
         return 0;
@@ -690,7 +734,11 @@ static int l_http_request(lua_State *L)
         lua_getfield(L, -1, "content-length");
         if (lua_isstring(L, -1)) {
             c->body = BODY_LENGTH;
-            c->remaining = strtoll(lua_tostring(L, -1), NULL, 10);
+            c->remaining = parse_size(lua_tostring(L, -1), 10);
+            if (c->remaining < 0) {
+                snprintf(c->err, sizeof c->err, "invalid Content-Length");
+                goto fail;
+            }
         }
         lua_pop(L, 1);
     }
@@ -729,7 +777,11 @@ static long body_read(http_conn *c, unsigned char *out, size_t n)
                 return -1;
             if (ll == 0)
                 continue; /* CRLF after the previous chunk */
-            c->remaining = strtoll(line, NULL, 16);
+            c->remaining = parse_size(line, 16);
+            if (c->remaining < 0) {
+                snprintf(c->err, sizeof c->err, "invalid chunk size in HTTP response");
+                return -1;
+            }
             if (c->remaining == 0) {
                 /* trailer section up to an empty line */
                 do {
@@ -786,8 +838,11 @@ static int l_conn_read(lua_State *L)
     luaL_argcheck(L, n > 0, 2, "must be positive");
     out = (unsigned char *)luaL_buffinitsize(L, &b, (size_t)n);
     got = body_read(c, out, (size_t)n);
-    if (got < 0)
-        return luaL_error(L, "%s", c->err);
+    if (got < 0) {
+        /* no Lua position prefix: this is a message for the user */
+        lua_pushfstring(L, "network error: %s", c->err);
+        return lua_error(L);
+    }
     if (got == 0) {
         luaL_pushfail(L);
         return 1;

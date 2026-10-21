@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* File system helpers missing from the Lua standard library. */
 #include <dirent.h>
 #include <errno.h>
