@@ -11,6 +11,11 @@ end
 M.verbose = os.getenv("PICOGIT_TRACE") ~= nil and os.getenv("PICOGIT_TRACE") ~= ""
 M.quiet = false
 
+-- Should progress be shown? Like git: only when stderr is a terminal.
+function M.show_progress()
+  return not M.quiet and core.isatty(2)
+end
+
 function M.trace(fmt, ...)
   if M.verbose then
     io.stderr:write("trace: ", fmt:format(...), "\n")

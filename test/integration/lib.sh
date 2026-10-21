@@ -161,7 +161,8 @@ assert_file() { # assert_file PATH CONTENT
 run_test() {
     local name=$1 log=$WORK/$1.log rc
     # Not inside `if`: errexit is ignored in a condition context.
-    ( set -e; cd "$WORK"; "$name" ) >"$log" 2>&1
+    mkdir -p "$WORK/t/$name"
+    ( set -e; cd "$WORK/t/$name"; "$name" ) >"$log" 2>&1
     rc=$?
     if [ "$rc" = 0 ]; then
         PASS=$((PASS + 1))

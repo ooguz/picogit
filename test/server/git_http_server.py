@@ -135,7 +135,7 @@ class Handler(BaseHTTPRequestHandler):
                 "GIT_CONFIG_NOSYSTEM": "1",
                 "HOME": ARGS.root,
             }
-            if self.headers.get("Git-Protocol"):
+            if self.headers.get("Git-Protocol") and not ARGS.protocol_v0:
                 env["GIT_PROTOCOL"] = self.headers["Git-Protocol"]
             if self.headers.get("Content-Encoding"):
                 env["HTTP_CONTENT_ENCODING"] = self.headers["Content-Encoding"]
@@ -184,6 +184,8 @@ def main():
     p.add_argument("--tls", nargs=2, metavar=("CERT", "KEY"))
     p.add_argument("--auth")
     p.add_argument("--no-chunked", action="store_true")
+    p.add_argument("--protocol-v0", action="store_true",
+                   help="ignore Git-Protocol (behave like a v0-only server)")
     p.add_argument("--verbose", action="store_true")
     ARGS = p.parse_args()
     ARGS.root = os.path.abspath(ARGS.root)
