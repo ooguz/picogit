@@ -1,14 +1,12 @@
-# OpenWrt package for picogit.
 #
-# Use it from a local feed that points at the openwrt/ directory of this
-# source tree, e.g. in the OpenWrt SDK:
+# Copyright (C) 2026 Özcan Oğuz <ozcan@oyd.org.tr>
 #
-#   echo "src-link picogit /path/to/picogit/openwrt" >> feeds.conf.default
-#   ./scripts/feeds update picogit && ./scripts/feeds install picogit
-#   make package/picogit/compile V=s
+# This is free software, licensed under the GNU General Public License v3.
 #
-# The package is built from the same sources and pinned dependencies
-# (../deps.mk) as the standalone binaries, with the SDK's cross compiler.
+# OpenWrt package for picogit, in the form submitted to the packages feed
+# (net/picogit). It links the system's Mbed TLS and zlib and uses the CA
+# store from ca-bundle; only Lua 5.4, which OpenWrt does not ship, is
+# built into the binary. See openwrt/README.md for local testing.
 
 include $(TOPDIR)/rules.mk
 
@@ -16,74 +14,60 @@ PKG_NAME:=picogit
 PKG_VERSION:=0.1.0
 PKG_RELEASE:=1
 
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE_URL:=https://github.com/ooguz/picogit/releases/download/v$(PKG_VERSION)
+PKG_HASH:=skip
+
+PKG_MAINTAINER:=Özcan Oğuz <ozcan@oyd.org.tr>
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
 
-# The picogit source tree this package directory lives in (openwrt/picogit/).
-# realpath follows the feed symlinks back to the real tree.
-PICOGIT_SRC ?= $(realpath $(CURDIR)/../..)
-include $(PICOGIT_SRC)/deps.mk
+# Lua 5.4 (MIT) is built into picogit; keep in sync with deps.mk
+# (checked by tools/check-openwrt-package.sh).
+PICOGIT_LUA_VERSION:=5.4.9
+PICOGIT_LUA_HASH:=2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6
+
+PKG_BUILD_PARALLEL:=1
 
 include $(INCLUDE_DIR)/package.mk
 
 define Package/picogit
-  SECTION:=utils
-  CATEGORY:=Utilities
+  SECTION:=net
+  CATEGORY:=Network
   SUBMENU:=Version Control Systems
-  TITLE:=Minimal git client (clone, pull, commit -a, push over HTTP(S))
+  TITLE:=Minimal git client (clone, pull, commit -a, push over HTTPS)
+  URL:=https://github.com/ooguz/picogit
+  DEPENDS:=+libmbedtls +zlib +ca-bundle
 endef
 
 define Package/picogit/description
-  picogit is a small, self-contained git client for embedded devices. It
-  supports shallow clone, fast-forward pull, commit -a and push over smart
-  HTTP(S) and carries its own TLS stack and CA bundle.
+  picogit is a small git client for routers. It can make shallow clones,
+  fast-forward pulls, commit the whole work tree (commit -a) and push over
+  smart HTTP(S). The repositories it creates are regular git repositories.
 endef
 
 define Download/picogit-lua
-  FILE:=$(LUA_TARBALL)
-  URL:=$(dir $(LUA_URL))
-  HASH:=$(LUA_SHA256)
+  FILE:=lua-$(PICOGIT_LUA_VERSION).tar.gz
+  URL:=https://www.lua.org/ftp/
+  HASH:=$(PICOGIT_LUA_HASH)
 endef
 $(eval $(call Download,picogit-lua))
 
-define Download/picogit-zlib
-  FILE:=$(ZLIB_TARBALL)
-  URL:=$(dir $(ZLIB_URL))
-  HASH:=$(ZLIB_SHA256)
-endef
-$(eval $(call Download,picogit-zlib))
-
-define Download/picogit-mbedtls
-  FILE:=$(MBEDTLS_TARBALL)
-  URL:=$(dir $(MBEDTLS_URL))
-  HASH:=$(MBEDTLS_SHA256)
-endef
-$(eval $(call Download,picogit-mbedtls))
-
-define Download/picogit-cacert
-  FILE:=$(CACERT_FILE)
-  URL:=$(dir $(CACERT_URL))
-  HASH:=$(CACERT_SHA256)
-endef
-$(eval $(call Download,picogit-cacert))
-
 define Build/Prepare
+	$(call Build/Prepare/Default)
 	mkdir -p $(PKG_BUILD_DIR)/dl
-	$(CP) $(PICOGIT_SRC)/Makefile $(PICOGIT_SRC)/deps.mk $(PICOGIT_SRC)/LICENSE \
-		$(PICOGIT_SRC)/config $(PICOGIT_SRC)/src $(PICOGIT_SRC)/tools $(PKG_BUILD_DIR)/
-	$(CP) $(DL_DIR)/$(LUA_TARBALL) $(DL_DIR)/$(ZLIB_TARBALL) \
-		$(DL_DIR)/$(MBEDTLS_TARBALL) $(DL_DIR)/$(CACERT_FILE) $(PKG_BUILD_DIR)/dl/
+	$(CP) $(DL_DIR)/lua-$(PICOGIT_LUA_VERSION).tar.gz $(PKG_BUILD_DIR)/dl/
 endef
 
 # Lua bytecode is only portable between little-endian targets.
 define Build/Compile
 	$(MAKE) -C $(PKG_BUILD_DIR) cross \
+		SYSTEM_LIBS=1 \
 		CC="$(TARGET_CC)" \
-		TARGET_CFLAGS="$(TARGET_CFLAGS)" \
+		TARGET_CFLAGS="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS)" \
 		TARGET_LDFLAGS="$(TARGET_LDFLAGS)" \
 		HOSTCC="$(HOSTCC)" \
-		PYTHON=python3 \
-		PICOGIT_VERSION="$(PKG_VERSION)-$(PKG_RELEASE)" \
+		PICOGIT_VERSION="$(PKG_VERSION)" \
 		EMBED_MODE=$(if $(CONFIG_BIG_ENDIAN),source,bytecode)
 endef
 

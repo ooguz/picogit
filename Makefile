@@ -32,19 +32,27 @@ ZIG      := $(ZIG_DIR)/zig
 HOSTCC   ?= cc
 PYTHON   ?= python3
 
-PICOGIT_VERSION := $(shell git -C $(TOP) describe --tags --always --dirty 2>/dev/null || echo 0.1.0)
+# Version: from git, or from VERSION in a source tarball made by `make dist`
+# (git archive substitutes it), else "unknown".
+PICOGIT_VERSION := $(or $(shell git -C $(TOP) describe --tags --always --dirty 2>/dev/null),$(shell grep -v Format $(TOP)/VERSION 2>/dev/null),unknown)
+PICOGIT_VERSION := $(patsubst v%,%,$(PICOGIT_VERSION))
 
 LUA_SRC     := $(SRCROOT)/lua-$(LUA_VERSION)
 ZLIB_SRC    := $(SRCROOT)/zlib-$(ZLIB_VERSION)
 MBEDTLS_SRC := $(SRCROOT)/mbedtls-$(MBEDTLS_VERSION)
-STAMP_SRC   := $(SRCROOT)/.stamp-$(LUA_VERSION)-$(ZLIB_VERSION)-$(MBEDTLS_VERSION)
+STAMP_SRC   := $(SRCROOT)/.stamp-$(LUA_VERSION)-$(ZLIB_VERSION)-$(MBEDTLS_VERSION)$(if $(filter 1,$(SYSTEM_LIBS)),-sys)
 HOSTLUA     := $(BUILD)/hostlua/lua
+
+# 1 = use the system's Mbed TLS, zlib and CA store (see the target section)
+SYSTEM_LIBS   ?= 0
+SYSTEM_CAFILE ?= /etc/ssl/certs/ca-certificates.crt
 
 export ZIG_GLOBAL_CACHE_DIR := $(BUILD)/zig-cache
 export ZIG_LOCAL_CACHE_DIR  := $(BUILD)/zig-cache
 
 ALL_TARGETS := host armv7 armv7hf aarch64 mipsel mips x86 riscv64
 
+# (dist is declared next to its rule)
 .PHONY: all $(ALL_TARGETS) test test-unit test-integration test-armv7 test-oldkernel test-https test-https-armv7 \
         sizes fetch clean distclean binary
 all: host
@@ -53,13 +61,22 @@ ifeq ($(origin CC),default)
 PREREQ_CC := $(ZIG)
 endif
 
+# With SYSTEM_LIBS=1 (see below) only the Lua sources are needed.
+ifeq ($(SYSTEM_LIBS),1)
+SRC_TARBALLS := $(DL)/$(LUA_TARBALL)
+CA_PREREQ    :=
+else
+SRC_TARBALLS := $(DL)/$(LUA_TARBALL) $(DL)/$(ZLIB_TARBALL) $(DL)/$(MBEDTLS_TARBALL)
+CA_PREREQ    := $(DL)/$(CACERT_FILE)
+endif
+
 # Sources must be extracted before the per-target make reads the mbedTLS
 # file list, hence the recursion.
-$(ALL_TARGETS): $(STAMP_SRC) $(HOSTLUA) $(DL)/$(CACERT_FILE) $(PREREQ_CC)
+$(ALL_TARGETS): $(STAMP_SRC) $(HOSTLUA) $(CA_PREREQ) $(PREREQ_CC)
 	@$(MAKE) --no-print-directory TARGET=$@ binary
 
 .PHONY: cross
-cross: $(STAMP_SRC) $(HOSTLUA) $(DL)/$(CACERT_FILE)
+cross: $(STAMP_SRC) $(HOSTLUA) $(CA_PREREQ)
 	@$(MAKE) --no-print-directory TARGET=cross binary
 
 # ---------------------------------------------------------------------------
@@ -88,9 +105,9 @@ $(ZIG): $(DL)/$(ZIG_TARBALL)
 	@tar -C $(TOOLDIR) -xf $<
 	@touch $@
 
-$(STAMP_SRC): $(DL)/$(LUA_TARBALL) $(DL)/$(ZLIB_TARBALL) $(DL)/$(MBEDTLS_TARBALL)
+$(STAMP_SRC): $(SRC_TARBALLS)
 	@mkdir -p $(SRCROOT)
-	@echo "  UNPACK  lua zlib mbedtls"
+	@echo "  UNPACK  $(notdir $^)"
 	@rm -rf $(LUA_SRC) $(ZLIB_SRC) $(MBEDTLS_SRC)
 	@for f in $^; do tar -C $(SRCROOT) -xf $$f || exit 1; done
 	@touch $@
@@ -187,17 +204,33 @@ MBEDTLS_OBJS := $(addprefix $(OBJ)/mbedtls/,$(addsuffix .o,$(MBEDTLS_CORE)))
 PG_OBJS      := $(addprefix $(OBJ)/pg/,$(addsuffix .o,$(PG_CORE))) \
     $(OBJ)/gen/embedded_lua.o $(OBJ)/gen/cabundle.o
 LIB_OBJS     := $(LUA_OBJS) $(ZLIB_OBJS) $(MBEDTLS_OBJS) $(PG_OBJS)
+LDLIBS       := -lm
+
+# SYSTEM_LIBS=1: link Mbed TLS and zlib from the system (dynamically) and
+# use the system CA store instead of embedding one. Lua is still built in.
+# This is how distributions such as OpenWrt want packages built, so that
+# security fixes in the libraries reach picogit without a rebuild.
+ifeq ($(SYSTEM_LIBS),1)
+  LDFLAGS_COMMON := -Wl,--gc-sections -s $(TARGET_LDFLAGS)
+  PG_CFLAGS := $(CFLAGS_COMMON) -std=c99 -D_GNU_SOURCE -Wall -Wextra \
+      -Wno-unused-parameter -I$(LUA_SRC)/src -I$(TOP)/src/c \
+      -DPICOGIT_VERSION='"$(PICOGIT_VERSION)"' -DPICOGIT_CA_DATE='"$(CACERT_DATE)"' \
+      -DPICOGIT_SYSTEM_CA='"$(SYSTEM_CAFILE)"'
+  PG_OBJS  := $(filter-out $(OBJ)/gen/cabundle.o,$(PG_OBJS))
+  LIB_OBJS := $(LUA_OBJS) $(PG_OBJS)
+  LDLIBS   := -lmbedtls -lmbedx509 -lmbedcrypto -lz -lm
+endif
 
 binary: $(OUT)/picogit $(OUT)/picogit-dev
 	@printf "  SIZE    %-28s %8d bytes\n" "$(TARGET)/picogit" $$(stat -c %s $(OUT)/picogit)
 
 $(OUT)/picogit: $(OBJ)/pg/main.o $(LIB_OBJS)
 	@echo "  LD      $(TARGET)/picogit"
-	@$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ $(OBJ)/pg/main.o $(LIB_OBJS) -lm
+	@$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ $(OBJ)/pg/main.o $(LIB_OBJS) $(LDLIBS)
 
 $(OUT)/picogit-dev: $(OBJ)/pg/main-dev.o $(LIB_OBJS)
 	@echo "  LD      $(TARGET)/picogit-dev"
-	@$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ $(OBJ)/pg/main-dev.o $(LIB_OBJS) -lm
+	@$(CC) $(CFLAGS_COMMON) $(LDFLAGS_COMMON) -o $@ $(OBJ)/pg/main-dev.o $(LIB_OBJS) $(LDLIBS)
 
 $(OBJ)/lua/%.o: $(LUA_SRC)/src/%.c
 	@mkdir -p $(dir $@)
@@ -332,6 +365,16 @@ test-https-armv7: armv7
 	docker run --rm -v $(TOP):/src -w /src -u $$(id -u):$$(id -g) -e HOME=/tmp \
 	    -e QEMU_CPU="$(QEMU_CPU)" picogit-test \
 	    env PICOGIT="qemu-arm /src/build/armv7/picogit" bash test/integration/https.sh
+
+# Reproducible source tarball of HEAD (what the OpenWrt package downloads):
+#   make dist  ->  dist/picogit-<version>.tar.gz
+.PHONY: dist
+dist:
+	@mkdir -p $(TOP)/dist
+	@git -C $(TOP) archive --format=tar --prefix=picogit-$(PICOGIT_VERSION)/ HEAD \
+	    | gzip -9n > $(TOP)/dist/picogit-$(PICOGIT_VERSION).tar.gz
+	@echo "  DIST    dist/picogit-$(PICOGIT_VERSION).tar.gz"
+	@sha256sum $(TOP)/dist/picogit-$(PICOGIT_VERSION).tar.gz | cut -d' ' -f1
 
 sizes:
 	@for t in $(ALL_TARGETS); do f=$(BUILD)/$$t/picogit; \

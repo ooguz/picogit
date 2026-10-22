@@ -43,7 +43,7 @@ typedef struct {
     int use_tls;
     int tls_ready;
     mbedtls_ssl_context ssl;
-    char err[256];
+    char err[512];
     unsigned char *buf; /* BUFSZ bytes, unread data is buf[pos..len) */
     size_t pos, len;
     int body;
@@ -70,6 +70,7 @@ static int rng_cb(void *ctx, unsigned char *out, size_t n)
     return pg_random(out, n) == 0 ? 0 : MBEDTLS_ERR_SSL_INTERNAL_ERROR;
 }
 
+#ifndef PICOGIT_SYSTEM_CA
 static int load_embedded_ca(char *err, size_t errlen)
 {
     uLongf len = (uLongf)pg_cabundle_len;
@@ -117,6 +118,8 @@ static int load_embedded_ca(char *err, size_t errlen)
     }
     return 0;
 }
+
+#endif /* !PICOGIT_SYSTEM_CA */
 
 static int load_ca_file(const char *path, char *err, size_t errlen)
 {
@@ -173,8 +176,19 @@ static int tls_setup(const char *cafile, int insecure, char *err, size_t errlen)
     if (insecure) {
         mbedtls_ssl_conf_authmode(&tlsg.conf, MBEDTLS_SSL_VERIFY_NONE);
     } else {
+#ifdef PICOGIT_SYSTEM_CA
+        /* built against the system's TLS library: use its CA store */
+        if (!cafile && access(PICOGIT_SYSTEM_CA, R_OK) != 0) {
+            snprintf(err, errlen, "no CA certificates at %s (install the CA bundle, "
+                     "e.g. opkg install ca-bundle, or use --cacert FILE)", PICOGIT_SYSTEM_CA);
+            return -1;
+        }
+        if (load_ca_file(cafile ? cafile : PICOGIT_SYSTEM_CA, err, errlen))
+            return -1;
+#else
         if (cafile ? load_ca_file(cafile, err, errlen) : load_embedded_ca(err, errlen))
             return -1;
+#endif
         mbedtls_ssl_conf_authmode(&tlsg.conf, MBEDTLS_SSL_VERIFY_REQUIRED);
         mbedtls_ssl_conf_ca_chain(&tlsg.conf, &tlsg.ca, NULL);
     }
@@ -875,6 +889,8 @@ void pg_register_http(lua_State *L)
     lua_pop(L, 1);
     lua_pushcfunction(L, l_http_request);
     lua_setfield(L, -2, "http_request");
+#ifndef PICOGIT_SYSTEM_CA
     lua_pushinteger(L, (lua_Integer)pg_cabundle_len);
     lua_setfield(L, -2, "cabundle_size");
+#endif
 }
