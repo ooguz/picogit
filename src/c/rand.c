@@ -61,7 +61,9 @@ int pg_random(void *buf, size_t n)
     return urandom_fill(p, n);
 }
 
-/* Random source for PSA crypto (MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG). */
+#ifdef MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG
+/* Random source for PSA crypto in the bundled Mbed TLS build; a system
+ * Mbed TLS uses its own entropy collection instead. */
 psa_status_t mbedtls_psa_external_get_random(
     mbedtls_psa_external_random_context_t *context,
     uint8_t *output, size_t output_size, size_t *output_length)
@@ -72,6 +74,7 @@ psa_status_t mbedtls_psa_external_get_random(
     *output_length = output_size;
     return PSA_SUCCESS;
 }
+#endif
 
 /* random_bytes(n) -> string */
 static int l_random_bytes(lua_State *L)

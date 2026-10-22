@@ -1,0 +1,5 @@
+# `git archive` fills in the version (see `make dist`)
+VERSION export-subst
+# not needed in source releases
+/.github export-ignore
+/.dockerignore export-ignore
