@@ -53,6 +53,7 @@ export ZIG_LOCAL_CACHE_DIR  := $(BUILD)/zig-cache
 ALL_TARGETS := host armv7 armv7hf aarch64 mipsel mips x86 riscv64
 
 # (dist is declared next to its rule)
+# check-size, dist: declared next to their rules
 .PHONY: all $(ALL_TARGETS) test test-unit test-integration test-armv7 test-oldkernel test-https test-https-armv7 \
         sizes fetch clean distclean binary
 all: host
@@ -98,6 +99,19 @@ $(eval $(call download,$(CACERT_URL),$(CACERT_FILE),$(CACERT_SHA256)))
 
 fetch: $(DL)/$(ZIG_TARBALL) $(DL)/$(LUA_TARBALL) $(DL)/$(ZLIB_TARBALL) \
        $(DL)/$(MBEDTLS_TARBALL) $(DL)/$(CACERT_FILE)
+
+# Re-check every file already in dl/ (e.g. restored from a CI cache)
+# against deps.mk; a mismatching file is deleted.
+.PHONY: verify-downloads
+verify-downloads:
+	@cd $(DL) 2>/dev/null || exit 0; \
+	for pair in $(ZIG_TARBALL)=$(ZIG_SHA256) $(LUA_TARBALL)=$(LUA_SHA256) \
+	            $(ZLIB_TARBALL)=$(ZLIB_SHA256) $(MBEDTLS_TARBALL)=$(MBEDTLS_SHA256) \
+	            $(CACERT_FILE)=$(CACERT_SHA256); do \
+	    f=$${pair%%=*}; h=$${pair#*=}; [ -f "$$f" ] || continue; \
+	    if echo "$$h  $$f" | sha256sum -c --quiet - >/dev/null 2>&1; then echo "  OK      $$f"; \
+	    else echo "  BAD     $$f (removed)"; rm -f "$$f"; fi; \
+	done
 
 $(ZIG): $(DL)/$(ZIG_TARBALL)
 	@mkdir -p $(TOOLDIR)
@@ -376,9 +390,21 @@ dist:
 	@echo "  DIST    dist/picogit-$(PICOGIT_VERSION).tar.gz"
 	@sha256sum $(TOP)/dist/picogit-$(PICOGIT_VERSION).tar.gz | cut -d' ' -f1
 
+# Size budget: every self-contained binary must stay below 1 MiB.
+SIZE_LIMIT ?= 1048576
+
 sizes:
 	@for t in $(ALL_TARGETS); do f=$(BUILD)/$$t/picogit; \
-	    [ -f $$f ] && printf "%-10s %8d bytes\n" $$t $$(stat -c %s $$f); done; true
+	    [ -f $$f ] && printf "%-10s %8d bytes  %3d%% of budget\n" $$t $$(stat -c %s $$f) \
+	        $$(( $$(stat -c %s $$f) * 100 / $(SIZE_LIMIT) )); done; true
+
+.PHONY: check-size
+check-size:
+	@fail=0; n=0; for t in $(ALL_TARGETS); do f=$(BUILD)/$$t/picogit; [ -f $$f ] || continue; \
+	    n=$$((n+1)); sz=$$(stat -c %s $$f); \
+	    if [ $$sz -ge $(SIZE_LIMIT) ]; then echo "  OVER    $$t: $$sz bytes >= $(SIZE_LIMIT)"; fail=1; fi; \
+	done; [ $$n -gt 0 ] || { echo "no binaries built"; exit 1; }; \
+	[ $$fail = 0 ] && echo "  SIZE    $$n binaries below $(SIZE_LIMIT) bytes"; exit $$fail
 
 clean:
 	rm -rf $(addprefix $(BUILD)/,$(ALL_TARGETS)) $(BUILD)/hostlua
