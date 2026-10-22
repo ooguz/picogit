@@ -1,5 +1,7 @@
 # picogit
 
+[![Release](https://img.shields.io/github/v/release/ooguz/picogit)](https://github.com/ooguz/picogit/releases) [![build](https://github.com/ooguz/picogit/actions/workflows/build.yml/badge.svg)](https://github.com/ooguz/picogit/actions/workflows/build.yml) ![License](https://img.shields.io/github/license/ooguz/picogit) ![GitHub Sponsors](https://img.shields.io/github/sponsors/ooguz) <a href="https://www.buymeacoffee.com/ooguz" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: 20px !important;width: 85px !important;" ></a>
+
 A minimal git client for routers and other small Linux devices: a single
 statically linked binary (~0.7 MB) that can **clone**, **pull**
 (fast-forward), **commit -a** and **push** over smart HTTP(S). No `git`,
@@ -30,7 +32,9 @@ picogit push
 - [Building](#building)
 - [Testing](#testing)
 - [How it works](#how-it-works)
-- [Limitations and future work](#limitations-and-future-work)
+- [Limitations and roadmap](#limitations-and-roadmap)
+- [Contributing](#contributing)
+- [Support the project](#support-the-project)
 - [License](#license)
 - [Türkçe](#türkçe)
 
@@ -165,25 +169,23 @@ picogit -q commit -a -m "backup $(date +%F)" && picogit -q push
 
 ### OpenWrt
 
-Either copy the matching binary to `/usr/bin/picogit` (the overlay file
-system keeps it across reboots, but not across sysupgrade unless listed in
-`/etc/sysupgrade.conf`), or build a package with the OpenWrt SDK using
-`openwrt/picogit/Makefile`:
+**Package.** `openwrt/picogit/Makefile` is a package for the OpenWrt
+packages feed. It links OpenWrt's own `libmbedtls` and `zlib` and uses
+`ca-bundle`, so it is only about 260 KB, and library security fixes reach it
+through OpenWrt. Until it is accepted into the feed, build it with the SDK
+as described in [`openwrt/README.md`](openwrt/README.md). Then install it:
+`opkg install picogit_*.ipk` on 24.10, or the `.apk` with `apk add` on
+25.12 and later. The package was verified with the 24.10.8 `bcm53xx` SDK
+against OpenWrt's libmbedtls 3.6.7: the full integration suite passed under
+qemu.
 
-```sh
-# in the OpenWrt SDK directory
-echo "src-link picogit /path/to/picogit/openwrt" >> feeds.conf.default
-./scripts/feeds update picogit && ./scripts/feeds install picogit
-make defconfig && make package/picogit/compile V=s
-```
-
-The package is built with the SDK's own cross compiler from the same
-pinned sources. It was verified with the OpenWrt 24.10.8 `bcm53xx` SDK
-(gcc 13, musl). That build produced `picogit_0.1.0-r1_arm_cortex-a9.ipk`
-with a 668 KB static binary, which passes the full integration suite
-under qemu. `/root` is persistent on OpenWrt, so `~/.netrc` works.
-To use the system CA store instead of the embedded one:
+**Static binary.** Alternatively, copy the matching static binary to
+`/usr/bin/picogit`. The overlay file system keeps it across reboots, but
+not across sysupgrade unless it is listed in `/etc/sysupgrade.conf`. To use
+the system CA store instead of the embedded one:
 `picogit --cacert /etc/ssl/certs/ca-certificates.crt clone …`.
+
+`/root` is persistent on OpenWrt, so `~/.netrc` works.
 
 ## Authentication and configuration
 
@@ -265,6 +267,18 @@ make cross CC=mips-linux-musl-gcc TARGET_CFLAGS="-march=mips32r2" EMBED_MODE=sou
 
 `EMBED_MODE=source` embeds Lua source instead of bytecode. Bytecode is
 only portable between little-endian targets.
+
+**System libraries.** `make cross SYSTEM_LIBS=1 CC=...` links Mbed TLS
+(3.x) and zlib from the system, dynamically. The binary then uses the CA
+store at `SYSTEM_CAFILE` (default `/etc/ssl/certs/ca-certificates.crt`).
+Only the Lua sources are downloaded. This is how distributions should build
+picogit; the OpenWrt package does the same. With Debian's mbedtls 3.6 the
+binary is 266 KB, and it passes the whole test suite.
+
+**Release tooling:**
+- `make dist` writes a reproducible source tarball of `HEAD`
+  (`dist/picogit-<version>.tar.gz`).
+- `make check-size` fails if any built binary reaches the 1 MiB budget.
 
 ## Testing
 
@@ -446,30 +460,41 @@ The integration tests contain hostile-repository scenarios
 (`test/integration/t_security.sh`) and malformed-server scenarios
 (`/__evil/*` in the test server).
 
-## Limitations and future work
+## Limitations and roadmap
 
 Not supported, by design: merge, rebase, branch management, tags beyond
 cloning one, SSH, submodules (gitlinks are kept but not checked out), LFS,
-force push, keeping packfiles with pack indexes (everything is loose),
-sparse checkout.
+force push, sparse checkout.
 
-Also not implemented at the moment:
+Not implemented at the moment:
 
-- HTTP proxies (`http_proxy`), HTTP keep-alive (each request uses a new
-  connection), gzip request bodies, credential helpers
+- `reset`, `status` and `log` (planned for 0.2)
+- HTTP proxies, HTTP keep-alive, gzip request bodies, credential helpers
 - `.gitattributes` (eol conversion, filters) and `core.autocrlf`
 - SHA-256 repositories; index version 4
-- multiple remotes or refspecs; pull/push always use the branch's upstream
-- no limits on object sizes chosen by the server: a hostile server can
-  fill the disk or memory (the operation then fails with an error, as with
-  git)
-- reflogs, hooks, `git gc`. Since objects stay loose, a long-lived clone
-  with a lot of history grows; recloning shallow from time to time is
-  cheap.
+- multiple remotes or refspecs: pull and push always use the branch's
+  upstream
+- limits on object sizes chosen by the server: a hostile server can fill
+  the disk or memory (the operation then fails with an error, as with git)
+- reflogs, hooks and `gc`. Objects are stored loose, so a long-lived clone
+  grows; recloning shallow from time to time is cheap
 
-Possible future work: keep-alive for the info/refs + POST pair (saves a TLS
-handshake), packed object storage with `.idx` generation, `--depth` for
-pull, a `status` command.
+[`ROADMAP.md`](ROADMAP.md) has the plan and the size budget: every binary
+stays below 1 MiB, and CI enforces it with `make check-size`.
+
+## Contributing
+
+Bug reports and pull requests are welcome; read
+[`CONTRIBUTING.md`](CONTRIBUTING.md) first. Report security problems
+privately as described in [`SECURITY.md`](SECURITY.md). Everyone taking part
+follows the [code of conduct](CODE_OF_CONDUCT.md).
+
+## Support the project
+
+If picogit is useful to you, you can support its development through
+[GitHub Sponsors](https://github.com/sponsors/ooguz),
+[Buy Me a Coffee](https://buymeacoffee.com/ooguz) or
+[PayPal](https://paypal.me/ozcanoguz).
 
 ## License
 
@@ -523,6 +548,18 @@ NTP'yi bekleyin. Merlin'de:
 - `push` force desteklemez.
 - `clone` varsayılan olarak `--depth 1` ile yapılır; tam geçmiş için
   `--depth 0` verin.
+
+**OpenWrt paketi:** `openwrt/picogit` OpenWrt'nin kendi `libmbedtls`,
+`zlib` ve `ca-bundle` paketlerini kullanır; yaklaşık 260 KB'tır.
+Packages feed'ine gönderilmek üzere hazırdır (bkz. `openwrt/README.md`).
+
+**Katkı ve destek:** Hata bildirimi ve katkılar için önce
+[`CONTRIBUTING.md`](CONTRIBUTING.md) dosyasını okuyun; güvenlik açıklarını
+[`SECURITY.md`](SECURITY.md)'deki gibi gizli bildirin. Planlar
+[`ROADMAP.md`](ROADMAP.md)'dedir. Projeyi
+[GitHub Sponsors](https://github.com/sponsors/ooguz),
+[Buy Me a Coffee](https://buymeacoffee.com/ooguz) veya
+[PayPal](https://paypal.me/ozcanoguz) ile destekleyebilirsiniz.
 
 **Derleme:** `make armv7` komutu sabitlenmiş zig, Lua, zlib, Mbed TLS ve CA
 paketini checksum kontrolüyle indirip `build/armv7/picogit` dosyasını

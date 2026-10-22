@@ -1,0 +1,13 @@
+# Only GitHub Actions are managed here; the C/Lua dependencies are pinned
+# with checksums in deps.mk and updated by hand (see CONTRIBUTING.md).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

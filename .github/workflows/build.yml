@@ -1,40 +1,55 @@
 name: build
 
+# Continuous integration. Releases are built by release.yml, without caches.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # git describe for the version string
+          persist-credentials: false
 
       - name: Install test dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-user openssl python3
 
-      - name: Cache downloads and toolchain
-        uses: actions/cache@v4
+      # Only the checksummed tarballs are cached, and they are verified
+      # again after the restore.
+      - name: Cache downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            dl
-            .cache
+          path: dl
           key: deps-${{ hashFiles('deps.mk') }}
+
+      - name: Verify cached downloads
+        run: make verify-downloads
 
       - name: Build all targets
         run: |
           make -j"$(nproc)" host armv7 armv7hf aarch64 mipsel mips x86 riscv64
           make sizes | tee sizes.txt
+
+      - name: Size budget (every binary below 1 MiB)
+        run: make check-size
+
+      - name: OpenWrt package consistency
+        run: sh tools/check-openwrt-package.sh
 
       - name: Tests (host)
         run: make test
@@ -53,32 +68,33 @@ jobs:
       - name: HTTPS against GitHub
         run: make test-https
 
-      - name: Collect binaries
-        run: |
-          mkdir -p dist
-          for t in armv7 armv7hf aarch64 mipsel mips x86 riscv64; do
-            cp build/$t/picogit dist/picogit-linux-$t
-          done
-          cp build/host/picogit dist/picogit-linux-x86_64
-          (cd dist && sha256sum picogit-* > SHA256SUMS)
-          cat dist/SHA256SUMS
-
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: picogit-binaries
-          path: dist/
+          path: build/*/picogit
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+  # The distribution build: system Mbed TLS 3.6, zlib and CA store.
+  system-libs:
     runs-on: ubuntu-24.04
+    container: debian:trixie-slim
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends make gcc libc6-dev libmbedtls-dev \
+            zlib1g-dev python3 git openssl ca-certificates curl
+          useradd -m tester
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: picogit-binaries
-          path: dist
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
+          persist-credentials: false
+
+      - name: Build and test with SYSTEM_LIBS=1
+        run: |
+          chown -R tester .
+          su tester -c "make cross SYSTEM_LIBS=1 CC=gcc &&
+            make test-unit test-integration PICOGIT_BIN=$PWD/build/cross/picogit \
+              PICOGIT_DEV_BIN=$PWD/build/cross/picogit-dev &&
+            PICOGIT=$PWD/build/cross/picogit bash test/integration/https.sh"
