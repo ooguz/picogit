@@ -10,7 +10,7 @@ PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://github.com/ooguz/picogit/releases/download/v$(PKG_VERSION)
-PKG_HASH:=24cf2b504e56ce44cdeddd28c50f90f234080f708382c265fd0b8f9eabc959e7
+PKG_HASH:=e77ca31d4482f396f74312a15a04530fbeff96c0c58137e8a532b012417aad5f
 
 PKG_MAINTAINER:=Özcan Oğuz <ozcan@oyd.org.tr>
 PKG_LICENSE:=GPL-3.0-or-later
