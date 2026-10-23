@@ -2,3 +2,6 @@
 /dl/
 /.cache/
 /dist/
+# core dumps (e.g. from qemu-user)
+*.core
+core
