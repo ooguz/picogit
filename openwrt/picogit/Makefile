@@ -1,12 +1,6 @@
 #
 # Copyright (C) 2026 Özcan Oğuz <ozcan@oyd.org.tr>
 #
-# This is free software, licensed under the GNU General Public License v3.
-#
-# OpenWrt package for picogit, in the form submitted to the packages feed
-# (net/picogit). It links the system's Mbed TLS and zlib and uses the CA
-# store from ca-bundle; only Lua 5.4, which OpenWrt does not ship, is
-# built into the binary. See openwrt/README.md for local testing.
 
 include $(TOPDIR)/rules.mk
 
@@ -14,16 +8,16 @@ PKG_NAME:=picogit
 PKG_VERSION:=0.1.0
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://github.com/ooguz/picogit/releases/download/v$(PKG_VERSION)
-PKG_HASH:=skip
+PKG_HASH:=24cf2b504e56ce44cdeddd28c50f90f234080f708382c265fd0b8f9eabc959e7
 
 PKG_MAINTAINER:=Özcan Oğuz <ozcan@oyd.org.tr>
 PKG_LICENSE:=GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE
 
-# Lua 5.4 (MIT) is built into picogit; keep in sync with deps.mk
-# (checked by tools/check-openwrt-package.sh).
+# picogit links the system's Mbed TLS and zlib and uses ca-bundle; Lua 5.4,
+# which OpenWrt does not ship, is downloaded separately and built in.
 PICOGIT_LUA_VERSION:=5.4.9
 PICOGIT_LUA_HASH:=2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6
 
