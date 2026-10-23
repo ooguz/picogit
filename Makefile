@@ -380,15 +380,18 @@ test-https-armv7: armv7
 	    -e QEMU_CPU="$(QEMU_CPU)" picogit-test \
 	    env PICOGIT="qemu-arm /src/build/armv7/picogit" bash test/integration/https.sh
 
-# Reproducible source tarball of HEAD (what the OpenWrt package downloads):
-#   make dist  ->  dist/picogit-<version>.tar.gz
+# Reproducible source tarballs of HEAD; the OpenWrt package downloads the
+# .tar.xz (the feed prefers the smallest archive):
+#   make dist  ->  dist/picogit-<version>.tar.{gz,xz}
+DIST_NAME := picogit-$(PICOGIT_VERSION)
 .PHONY: dist
 dist:
 	@mkdir -p $(TOP)/dist
-	@git -C $(TOP) archive --format=tar --prefix=picogit-$(PICOGIT_VERSION)/ HEAD \
-	    | gzip -9n > $(TOP)/dist/picogit-$(PICOGIT_VERSION).tar.gz
-	@echo "  DIST    dist/picogit-$(PICOGIT_VERSION).tar.gz"
-	@sha256sum $(TOP)/dist/picogit-$(PICOGIT_VERSION).tar.gz | cut -d' ' -f1
+	@git -C $(TOP) archive --format=tar --prefix=$(DIST_NAME)/ HEAD > $(TOP)/dist/$(DIST_NAME).tar
+	@gzip -9n < $(TOP)/dist/$(DIST_NAME).tar > $(TOP)/dist/$(DIST_NAME).tar.gz
+	@xz -9 -T1 < $(TOP)/dist/$(DIST_NAME).tar > $(TOP)/dist/$(DIST_NAME).tar.xz
+	@rm $(TOP)/dist/$(DIST_NAME).tar
+	@cd $(TOP)/dist && sha256sum $(DIST_NAME).tar.gz $(DIST_NAME).tar.xz
 
 # Size budget: every self-contained binary must stay below 1 MiB.
 SIZE_LIMIT ?= 1048576
