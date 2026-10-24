@@ -53,9 +53,12 @@ define Build/Prepare
 	$(CP) $(DL_DIR)/lua-$(PICOGIT_LUA_VERSION).tar.gz $(PKG_BUILD_DIR)/dl/
 endef
 
-# Lua bytecode is only portable between little-endian targets.
+# Lua bytecode is only portable between little-endian targets. TARGET is
+# cleared because the SDK containers set it in the environment, and the
+# picogit Makefile uses it for its own build targets.
 define Build/Compile
 	$(MAKE) -C $(PKG_BUILD_DIR) cross \
+		TARGET= \
 		SYSTEM_LIBS=1 \
 		CC="$(TARGET_CC)" \
 		TARGET_CFLAGS="$(TARGET_CFLAGS) $(TARGET_CPPFLAGS)" \

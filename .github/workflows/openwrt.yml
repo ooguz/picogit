@@ -1,0 +1,127 @@
+name: openwrt
+
+# Builds openwrt/picogit/Makefile with the OpenWrt SDKs, installs the result
+# in OpenWrt rootfs containers where one exists for the architecture, and
+# runs openwrt/selftest.sh there. The packages are uploaded as artifacts;
+# a manual run with "publish" also attaches them to the release that the
+# Makefile's PKG_VERSION names, for people testing on their devices.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "openwrt/**"
+      - "tools/openwrt-*.sh"
+      - ".github/workflows/openwrt.yml"
+  pull_request:
+    paths:
+      - "openwrt/**"
+      - "tools/openwrt-*.sh"
+      - ".github/workflows/openwrt.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Attach the packages to the GitHub release
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: ${{ matrix.arch }} ${{ matrix.version }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # 24.10 uses opkg (.ipk), 25.12 apk (.apk).
+        version: ["24.10.8", "25.12.6"]
+        arch:
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_generic
+          - arm_cortex-a7
+          - arm_cortex-a7_neon-vfpv4
+          - arm_cortex-a9
+          - arm_cortex-a9_vfpv3-d16
+          - arm_cortex-a15_neon-vfpv4
+          - i386_pentium4
+          - mips_24kc
+          - mipsel_24kc
+          - mipsel_74kc
+          - x86_64
+        # Architectures with an OpenWrt rootfs image to run the package in.
+        include:
+          - { arch: aarch64_generic, runtime: true }
+          - { arch: arm_cortex-a15_neon-vfpv4, runtime: true }
+          - { arch: mips_24kc, runtime: true }
+          - { arch: x86_64, runtime: true }
+    env:
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the package
+        run: |
+          mkdir -p out
+          chmod a+rwx out
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/out:/out" \
+            "ghcr.io/openwrt/sdk:$ARCH-$VERSION" sh /src/tools/openwrt-sdk-build.sh
+          ls -l out
+
+      - name: Register QEMU
+        if: matrix.runtime && matrix.arch != 'x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static binfmt-support
+          sudo update-binfmts --import
+
+      - name: Install and run the self-test
+        if: matrix.runtime
+        run: |
+          docker run --rm --platform "linux/$ARCH" \
+            -v "$PWD:/src:ro" -v "$PWD/out:/out" \
+            "ghcr.io/openwrt/rootfs:$ARCH-$VERSION" sh /src/tools/openwrt-runtime-test.sh
+          cat out/selftest-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: picogit-openwrt-${{ matrix.version }}-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: picogit-openwrt-*
+          path: artifacts
+          merge-multiple: false
+
+      - name: Attach the packages to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^PKG_VERSION:=//p' openwrt/picogit/Makefile)
+          mkdir -p dist
+          find artifacts -type f \( -name '*.ipk' -o -name '*.apk' \) -exec cp {} dist/ \;
+          (cd dist && sha256sum -- * > SHA256SUMS-openwrt)
+          cat dist/SHA256SUMS-openwrt
+          gh release upload "v$version" dist/* --clobber --repo "$GITHUB_REPOSITORY"
