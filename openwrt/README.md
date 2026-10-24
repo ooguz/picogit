@@ -17,9 +17,25 @@ instead of 690 KB for the self-contained binary.
 The upstream build is `make cross SYSTEM_LIBS=1` from the release tarball.
 `SYSTEM_LIBS=1` works for other distributions too.
 
+To test the package on a device, see [TESTING.md](TESTING.md): it has
+ready-made packages for the common architectures and a self-test script
+whose report goes into an issue.
+
 ## Testing with the SDK
 
-Use the SDK of the target you care about (the example is `bcm53xx`, the
+The quickest way is the official SDK container, as in CI
+([`.github/workflows/openwrt.yml`](../.github/workflows/openwrt.yml)); the
+image tag is the package architecture and the OpenWrt version:
+
+```sh
+mkdir -p out
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/out:/out" \
+    ghcr.io/openwrt/sdk:mipsel_24kc-25.12.6 sh /src/tools/openwrt-sdk-build.sh
+```
+
+This builds the release tarball named in the Makefile. To build the
+current tree instead, or with an SDK tarball, use the SDK of the target you
+care about (the example is `bcm53xx`, the
 SoC family of many ASUS routers):
 
 ```sh
@@ -30,7 +46,7 @@ make dist PICOGIT_VERSION=0.1.0
 echo "src-link picogit /path/to/picogit/openwrt" >> feeds.conf.default
 ./scripts/feeds update base picogit
 ./scripts/feeds install picogit
-cp /path/to/picogit/dist/picogit-0.1.0.tar.gz dl/
+cp /path/to/picogit/dist/picogit-0.1.0.tar.xz dl/
 make defconfig
 make package/picogit/compile V=s
 ls bin/packages/*/picogit/
@@ -56,10 +72,12 @@ libmbedtls 3.6.7, zlib and ca-bundle, on a Cortex-A9 model without FPU.
 ## Submitting
 
 1. Tag the release (`git tag v0.1.0 && git push origin v0.1.0`). CI attaches
-   `picogit-0.1.0.tar.gz` to the GitHub release.
-2. Put the tarball's SHA-256 into `PKG_HASH`.
+   `picogit-0.1.0.tar.gz` and `picogit-0.1.0.tar.xz` to the GitHub release.
+2. Put the SHA-256 of the `.tar.xz` into `PKG_HASH`.
    `tools/check-openwrt-package.sh` checks that `PKG_VERSION` matches the
-   tag and that the Lua pin matches `deps.mk`.
+   tag and that the Lua pin matches `deps.mk`. Once that is on `main`, run
+   the `openwrt` workflow by hand with "publish" to attach the packages for
+   testers to the release.
 3. Copy `picogit/Makefile` to `net/picogit/Makefile` in a fork of
    `openwrt/packages`. Build-test it on at least one target, and open a pull
    request following the feed's

@@ -137,6 +137,12 @@ $(HOSTLUA): $(STAMP_SRC)
 # ---------------------------------------------------------------------------
 # Per-target build (invoked recursively with TARGET=...)
 
+# Build environments such as the OpenWrt SDK containers set TARGET for their
+# own use; only a TARGET given on the command line selects a build here.
+ifeq ($(origin TARGET),environment)
+  TARGET :=
+endif
+
 ifneq ($(TARGET),)
 
 # Bytecode is portable between little-endian targets with 64-bit

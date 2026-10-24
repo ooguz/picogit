@@ -172,12 +172,12 @@ picogit -q commit -a -m "backup $(date +%F)" && picogit -q push
 **Package.** `openwrt/picogit/Makefile` is a package for the OpenWrt
 packages feed. It links OpenWrt's own `libmbedtls` and `zlib` and uses
 `ca-bundle`, so it is only about 260 KB, and library security fixes reach it
-through OpenWrt. Until it is accepted into the feed, build it with the SDK
-as described in [`openwrt/README.md`](openwrt/README.md). Then install it:
-`opkg install picogit_*.ipk` on 24.10, or the `.apk` with `apk add` on
-25.12 and later. The package was verified with the 24.10.8 `bcm53xx` SDK
-against OpenWrt's libmbedtls 3.6.7: the full integration suite passed under
-qemu.
+through OpenWrt. Until it is accepted into the feed, the release page has
+packages for 13 common architectures, for OpenWrt 24.10 (`.ipk`) and 25.12
+(`.apk`). [`openwrt/TESTING.md`](openwrt/TESTING.md) explains how to
+install one and run the self-test; please report how it went. For other
+architectures, build it with the SDK as described in
+[`openwrt/README.md`](openwrt/README.md).
 
 **Static binary.** Alternatively, copy the matching static binary to
 `/usr/bin/picogit`. The overlay file system keeps it across reboots, but
@@ -552,6 +552,9 @@ NTP'yi bekleyin. Merlin'de:
 **OpenWrt paketi:** `openwrt/picogit` OpenWrt'nin kendi `libmbedtls`,
 `zlib` ve `ca-bundle` paketlerini kullanır; yaklaşık 260 KB'tır.
 Packages feed'ine gönderilmek üzere hazırdır (bkz. `openwrt/README.md`).
+Release sayfasında 13 mimari için 24.10 (`.ipk`) ve 25.12 (`.apk`)
+paketleri vardır. Cihazınızda denemek ve sonucu bildirmek için
+[`openwrt/TESTING.md`](openwrt/TESTING.md)'deki adımları izleyin.
 
 **Katkı ve destek:** Hata bildirimi ve katkılar için önce
 [`CONTRIBUTING.md`](CONTRIBUTING.md) dosyasını okuyun; güvenlik açıklarını

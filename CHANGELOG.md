@@ -3,6 +3,16 @@
 All notable changes are listed here. The project follows
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+- `openwrt/selftest.sh` and `openwrt/TESTING.md`: a self-test for OpenWrt
+  devices and a guide for people testing the package, with an issue form
+  for the reports
+- CI builds the OpenWrt package with the 24.10 and 25.12 SDKs for 13
+  architectures, and runs the self-test in OpenWrt rootfs containers
+- the build ignores a `TARGET` set in the environment, as the OpenWrt SDK
+  containers do
+
 ## [0.1.0] - 2026-10-23
 
 First public release.

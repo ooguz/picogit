@@ -1,0 +1,51 @@
+name: OpenWrt test report
+description: Report how the picogit package worked on your OpenWrt device (success reports are welcome too)
+title: "OpenWrt test: <device>, <OpenWrt version>"
+labels: ["openwrt", "test report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing! [openwrt/TESTING.md](https://github.com/ooguz/picogit/blob/main/openwrt/TESTING.md)
+        explains how to install the package and run the self-test. The report contains no tokens,
+        but please read it before pasting.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Everything worked
+        - Something failed
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Model and hardware revision, e.g. "Linksys WRT3200ACM" or "Xiaomi AX3000T"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How was picogit installed?
+      options:
+        - Package from the GitHub release
+        - Package built with the OpenWrt SDK
+        - Package from the OpenWrt feeds
+        - Static release binary
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Self-test report
+      description: The contents of /tmp/picogit-selftest-report.md
+      placeholder: "### picogit self-test ..."
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Problems while installing, what you use picogit for, git hosts you tried (GitHub, GitLab, Gitea, Forgejo, ...)
